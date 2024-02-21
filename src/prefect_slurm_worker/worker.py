@@ -166,7 +166,9 @@ class SlurmWorker(BaseWorker):
         task_status: anyio.abc.TaskStatus | None = None,
     ) -> SlurmWorkerResult:
         flow_run_logger = self.get_flow_run_logger(flow_run)
+        flow_run_logger.debug(f"configuration.command:\n{configuration.command}")
         script = self._submit_script(configuration)
+        flow_run_logger.debug(f"script:\n{script}")
         job = await self._create_and_start_job(
             script,
             configuration,
@@ -226,16 +228,16 @@ class SlurmWorker(BaseWorker):
             command.append(f"--partition={configuration.partition}")
         if configuration.working_dir is not None:
             command.append(f"--chdir={configuration.working_dir.as_posix()}")
-        logger.info(f"Command:\n{' '.join(command)}")
-        logger.info(f"Script:\n{script}")
+        logger.debug(f"Command:\n{' '.join(command)}")
+        logger.debug(f"Script:\n{script}")
         process = await run_process_pipe_script(
             command=command,
             script=script,
             logger=logger,
             stream_output=configuration.stream_output,
         )
-        logger.info(process.returncode)
-        logger.info(vars(process))
+        logger.debug(process.returncode)
+        logger.debug(vars(process))
         return SlurmJob(id=0)
 
     async def _get_job_status(self, job: SlurmJob) -> SlurmJobStatus:
@@ -280,27 +282,27 @@ async def run_process_pipe_script(
         **kwargs,
     ) as process:
         if logger is None:
-            info = print
+            debug = print
         else:
-            info = logger.info
-        info(f"Command sent to {process.pid}")
+            debug = logger.debug
+        debug(f"Command sent to {process.pid}")
         if script is not None:
             if process.stdin is not None:
-                info(f"Sending script to {process.pid} stdin")
+                debug(f"Sending script to {process.pid} stdin")
                 await process.stdin.send(script.encode())
                 await process.stdin.aclose()
             else:
                 raise ValueError("cannot reach stdin")
 
         if stream_output:
-            info(f"Streaming output of {process.pid}")
+            debug(f"Streaming output of {process.pid}")
             await consume_process_output(
                 process,
                 stdout_sink=stream_output[0],
                 stderr_sink=stream_output[1],
             )
 
-        info(f"Waiting {process.pid}")
+        debug(f"Waiting {process.pid}")
         await process.wait()
 
     return process
