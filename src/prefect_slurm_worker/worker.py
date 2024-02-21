@@ -288,16 +288,17 @@ async def run_process_pipe_script(
             if process.stdin is not None:
                 info(f"Sending script to {process.pid} stdin")
                 await process.stdin.send(script.encode())
+                await process.stdin.aclose()
             else:
                 raise ValueError("cannot reach stdin")
 
-        # if stream_output:
-        #     info(f"Streaming output of {process.pid}")
-        #     await consume_process_output(
-        #         process,
-        #         stdout_sink=stream_output[0],
-        #         stderr_sink=stream_output[1],
-        #     )
+        if stream_output:
+            info(f"Streaming output of {process.pid}")
+            await consume_process_output(
+                process,
+                stdout_sink=stream_output[0],
+                stderr_sink=stream_output[1],
+            )
 
         info(f"Waiting {process.pid}")
         await process.wait()
