@@ -231,6 +231,7 @@ class SlurmWorker(BaseWorker):
         process = await run_process_pipe_script(
             command=command,
             script=script,
+            logger=logger,
             stream_output=configuration.stream_output,
         )
         logger.info(process.returncode)
@@ -255,6 +256,7 @@ class SlurmWorker(BaseWorker):
 async def run_process_pipe_script(
     command: list[str],
     script: str | None = None,
+    logger: PrefectLogAdapter | None = None,
     stream_output: bool | tuple[TextSink | None, TextSink | None] = False,
     **kwargs,
 ):
@@ -272,23 +274,31 @@ async def run_process_pipe_script(
 
     async with open_process(
         command,
-        stdin=subprocess.PIPE if script is not None else subprocess.DEVNULL,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE if stream_output else subprocess.DEVNULL,
         stderr=subprocess.PIPE if stream_output else subprocess.DEVNULL,
         **kwargs,
     ) as process:
+        if logger is None:
+            info = print
+        else:
+            info = logger.info
+        info(f"Command sent to {process.pid}")
         if script is not None:
             if process.stdin is not None:
+                info(f"Sending script to {process.pid} stdin")
                 await process.stdin.send(script.encode())
             else:
                 raise ValueError("cannot reach stdin")
         if stream_output:
+            info(f"Streaming output of {process.pid}")
             await consume_process_output(
                 process,
                 stdout_sink=stream_output[0],
                 stderr_sink=stream_output[1],
             )
 
+        info(f"Waiting {process.pid}")
         await process.wait()
 
     return process
