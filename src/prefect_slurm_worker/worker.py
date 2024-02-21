@@ -1,11 +1,13 @@
 import asyncio
 from datetime import timedelta
 from enum import IntEnum
+from io import StringIO
 from pathlib import Path
 
 import anyio.abc
 from prefect._internal.pydantic import HAS_PYDANTIC_V2
 from prefect.client.schemas import FlowRun
+from prefect.logging.loggers import PrefectLogAdapter
 from prefect.server.schemas.core import Flow
 from prefect.server.schemas.responses import DeploymentResponse
 from prefect.utilities.filesystem import relative_path_to_current_platform
@@ -14,7 +16,6 @@ from prefect.workers.base import (
     BaseJobConfiguration,
     BaseWorker,
     BaseWorkerResult,
-    PrefectLogAdapter,
 )
 from pydantic import BaseModel
 
@@ -161,8 +162,9 @@ class SlurmWorker(BaseWorker):
     ) -> SlurmWorkerResult:
         flow_run_logger = self.get_flow_run_logger(flow_run)
         script = self._submit_script(configuration)
-        flow_run_logger.info(f"Submitting script:\n{script}")
-        job = await self._create_and_start_job(configuration, flow_run_logger)
+        job = await self._create_and_start_job(
+            script, configuration, flow_run_logger
+        )
         if task_status:
             # Use a unique ID to mark the run as started. This ID is later used to tear down infrastructure
             # if the flow run is cancelled.
@@ -205,9 +207,11 @@ class SlurmWorker(BaseWorker):
 
     async def _create_and_start_job(
         self,
+        script: str,
         configuration: SlurmJobConfiguration,
         logger: PrefectLogAdapter,
     ) -> SlurmJob:
+        script_buffer = StringIO(script)
         command = ["sbatch", "--parsable"]
         command.append(f"--nodes={configuration.num_nodes}")
         command.append(f"--ntasks={configuration.num_processes_per_node}")
@@ -216,13 +220,17 @@ class SlurmWorker(BaseWorker):
             command.append(f"--partition={configuration.partition}")
         if configuration.working_dir is not None:
             command.append(f"--chdir={configuration.working_dir.as_posix()}")
+        logger.info(f"Command:\n{' '.join(command)}")
+        logger.info(f"Script:\n{script}")
         process = await run_process(
             command,
             stream_output=configuration.stream_output,
+            stdin=script_buffer,
             # task_status=task_status,
             # task_status_handler=_infrastructure_pid_from_process,
             # **kwargs,
         )
+        logger.info(vars(process))
         return SlurmJob(id=0)
 
     async def _get_job_status(self, job: SlurmJob) -> SlurmJobStatus:
