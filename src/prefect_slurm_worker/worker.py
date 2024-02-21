@@ -235,6 +235,7 @@ class SlurmWorker(BaseWorker):
             script=script,
             logger=logger,
             stream_output=configuration.stream_output,
+            env=configuration.env,
         )
         logger.debug(process.returncode)
         logger.debug(vars(process))
