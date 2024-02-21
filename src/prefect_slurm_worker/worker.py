@@ -160,7 +160,8 @@ class SlurmWorker(BaseWorker):
     ) -> SlurmWorkerResult:
         flow_run_logger = self.get_flow_run_logger(flow_run)
         script = self._submit_script(configuration)
-        job = await self._create_and_start_job(configuration)
+        flow_run_logger.info(f"Submitting script:\n{script}")
+        job = await self._create_and_start_job(configuration, flow_run_logger)
         if task_status:
             # Use a unique ID to mark the run as started. This ID is later used to tear down infrastructure
             # if the flow run is cancelled.
