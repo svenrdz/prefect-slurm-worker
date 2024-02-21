@@ -1,7 +1,8 @@
 import asyncio
+import subprocess
+import sys
 from datetime import timedelta
 from enum import IntEnum
-from io import StringIO
 from pathlib import Path
 
 import anyio.abc
@@ -11,7 +12,11 @@ from prefect.logging.loggers import PrefectLogAdapter
 from prefect.server.schemas.core import Flow
 from prefect.server.schemas.responses import DeploymentResponse
 from prefect.utilities.filesystem import relative_path_to_current_platform
-from prefect.utilities.processutils import run_process
+from prefect.utilities.processutils import (
+    TextSink,
+    consume_process_output,
+    open_process,
+)
 from prefect.workers.base import (
     BaseJobConfiguration,
     BaseWorker,
@@ -163,7 +168,9 @@ class SlurmWorker(BaseWorker):
         flow_run_logger = self.get_flow_run_logger(flow_run)
         script = self._submit_script(configuration)
         job = await self._create_and_start_job(
-            script, configuration, flow_run_logger
+            script,
+            configuration,
+            flow_run_logger,
         )
         if task_status:
             # Use a unique ID to mark the run as started. This ID is later used to tear down infrastructure
@@ -211,7 +218,6 @@ class SlurmWorker(BaseWorker):
         configuration: SlurmJobConfiguration,
         logger: PrefectLogAdapter,
     ) -> SlurmJob:
-        script_buffer = StringIO(script)
         command = ["sbatch", "--parsable"]
         command.append(f"--nodes={configuration.num_nodes}")
         command.append(f"--ntasks={configuration.num_processes_per_node}")
@@ -222,14 +228,12 @@ class SlurmWorker(BaseWorker):
             command.append(f"--chdir={configuration.working_dir.as_posix()}")
         logger.info(f"Command:\n{' '.join(command)}")
         logger.info(f"Script:\n{script}")
-        process = await run_process(
-            command,
+        process = await run_process_pipe_script(
+            command=command,
+            script=script,
             stream_output=configuration.stream_output,
-            stdin=script_buffer,
-            # task_status=task_status,
-            # task_status_handler=_infrastructure_pid_from_process,
-            # **kwargs,
         )
+        logger.info(process.returncode)
         logger.info(vars(process))
         return SlurmJob(id=0)
 
@@ -246,3 +250,45 @@ class SlurmWorker(BaseWorker):
         ) in SlurmJobStatus.waitable():
             await asyncio.sleep(configuration.update_interval_sec)
         return status
+
+
+async def run_process_pipe_script(
+    command: list[str],
+    script: str | None = None,
+    stream_output: bool | tuple[TextSink | None, TextSink | None] = False,
+    **kwargs,
+):
+    """
+    Like `anyio.run_process` but with:
+
+    - Use of our `open_process` utility to ensure resources are cleaned up
+    - Simple `stream_output` support to connect the subprocess to the parent stdout/err
+    - Support for submission with `TaskGroup.start` marking as 'started' after the
+        process has been created. When used, the PID is returned to the task status.
+
+    """
+    if stream_output is True:
+        stream_output = (sys.stdout, sys.stderr)
+
+    async with open_process(
+        command,
+        stdin=subprocess.PIPE if script is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE if stream_output else subprocess.DEVNULL,
+        stderr=subprocess.PIPE if stream_output else subprocess.DEVNULL,
+        **kwargs,
+    ) as process:
+        if script is not None:
+            if process.stdin is not None:
+                await process.stdin.send(script.encode())
+            else:
+                raise ValueError("cannot reach stdin")
+        if stream_output:
+            await consume_process_output(
+                process,
+                stdout_sink=stream_output[0],
+                stderr_sink=stream_output[1],
+            )
+
+        await process.wait()
+
+    return process
