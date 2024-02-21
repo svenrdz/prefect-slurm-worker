@@ -14,6 +14,7 @@ from prefect.workers.base import (
     BaseJobConfiguration,
     BaseWorker,
     BaseWorkerResult,
+    PrefectLogAdapter,
 )
 from pydantic import BaseModel
 
@@ -203,7 +204,9 @@ class SlurmWorker(BaseWorker):
         return "python -m prefect.engine"
 
     async def _create_and_start_job(
-        self, configuration: SlurmJobConfiguration
+        self,
+        configuration: SlurmJobConfiguration,
+        logger: PrefectLogAdapter,
     ) -> SlurmJob:
         command = ["sbatch", "--parsable"]
         command.append(f"--nodes={configuration.num_nodes}")
@@ -213,16 +216,13 @@ class SlurmWorker(BaseWorker):
             command.append(f"--partition={configuration.partition}")
         if configuration.working_dir is not None:
             command.append(f"--chdir={configuration.working_dir.as_posix()}")
-
-        # process = await run_process(
-        #     command.split(" "),
-        #     stream_output=configuration.stream_output,
-        #     task_status=task_status,
-        #     task_status_handler=_infrastructure_pid_from_process,
-        #     cwd=working_dir,
-        #     env=configuration.env,
-        #     **kwargs,
-        # )
+        process = await run_process(
+            command,
+            stream_output=configuration.stream_output,
+            # task_status=task_status,
+            # task_status_handler=_infrastructure_pid_from_process,
+            # **kwargs,
+        )
         return SlurmJob(id=0)
 
     async def _get_job_status(self, job: SlurmJob) -> SlurmJobStatus:
