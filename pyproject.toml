@@ -26,4 +26,8 @@ distribution = true
 [tool.pdm.dev-dependencies]
 dev = [
     "jupyter-console>=6.6.3",
+    "prefect-gitlab>=0.2.2",
+    "-e file:///home/srodriguez/ipsl/workflower/prefecter/prefect#egg=prefect",
+    "starlette-admin>=0.13.2",
+    "watchfiles>=0.21.0",
 ]
