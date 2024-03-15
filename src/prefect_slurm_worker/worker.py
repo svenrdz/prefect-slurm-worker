@@ -12,9 +12,8 @@ from prefect.logging.loggers import PrefectLogAdapter
 from prefect.server.schemas.core import Flow
 from prefect.server.schemas.responses import DeploymentResponse
 from prefect.utilities.filesystem import relative_path_to_current_platform
-from prefect.utilities.processutils import (
+from prefect.utilities.processutils import (  # consume_process_output,
     TextSink,
-    consume_process_output,
     open_process,
 )
 from prefect.workers.base import (
@@ -88,7 +87,7 @@ class SlurmJobStatus(IntEnum):
 
 
 class SlurmJob(BaseModel):
-    id: int
+    id: int | None
 
 
 class SlurmJobConfiguration(BaseJobConfiguration):
@@ -166,7 +165,9 @@ class SlurmWorker(BaseWorker):
         task_status: anyio.abc.TaskStatus | None = None,
     ) -> SlurmWorkerResult:
         flow_run_logger = self.get_flow_run_logger(flow_run)
-        flow_run_logger.debug(f"configuration.command:\n{configuration.command}")
+        flow_run_logger.debug(
+            f"configuration.command:\n{configuration.command}"
+        )
         script = self._submit_script(configuration)
         flow_run_logger.debug(f"script:\n{script}")
         job = await self._create_and_start_job(
@@ -174,11 +175,13 @@ class SlurmWorker(BaseWorker):
             configuration,
             flow_run_logger,
         )
+        flow_run_logger.warning(f"job: {job}")
         if task_status:
             # Use a unique ID to mark the run as started. This ID is later used to tear down infrastructure
             # if the flow run is cancelled.
             task_status.started(job.id)
-        job_status = await self._watch_job(job, configuration)
+        job_status = await self._watch_job(job, configuration, flow_run_logger)
+        flow_run_logger.warning(f"status: {job_status}")
         exit_code = job_status.value if job_status else -1
         return SlurmWorkerResult(
             status_code=exit_code,
@@ -230,27 +233,56 @@ class SlurmWorker(BaseWorker):
             command.append(f"--chdir={configuration.working_dir.as_posix()}")
         logger.debug(f"Command:\n{' '.join(command)}")
         logger.debug(f"Script:\n{script}")
-        process = await run_process_pipe_script(
+        # out_sink = anyio.create_memory_object_stream()
+        # err_sink = anyio.create_memory_object_stream()
+        output = await run_process_pipe_script(
             command=command,
             script=script,
             logger=logger,
-            stream_output=configuration.stream_output,
+            stream_output=True,
+            # stream_output=(out_sink[0], err_sink[0]),
             env=configuration.env,
         )
-        logger.debug(process.returncode)
-        logger.debug(vars(process))
-        return SlurmJob(id=0)
+        try:
+            job_id = int(output.strip())
+            return SlurmJob(id=job_id)
+        except Exception as e:
+            logger.exception(e)
+            return SlurmJob(id=None)
 
-    async def _get_job_status(self, job: SlurmJob) -> SlurmJobStatus:
-        command = ["squeue", f"--job={job.id}", "--long", "--noheader"]
-        return SlurmJobStatus.Failed
+    async def _get_job_status(
+        self,
+        job: SlurmJob,
+        logger: PrefectLogAdapter,
+    ) -> SlurmJobStatus:
+        if job.id is None:
+            return SlurmJobStatus.Failed
+        else:
+            command = [
+                "squeue",
+                f"--job={job.id}",
+                "--noheader",
+                "--state=all",
+                "--Format=State,exit_code",
+            ]
+            output = await run_process_pipe_script(
+                command=command,
+                script=None,
+                stream_output=True,
+            )
+            logger.warning(f"{output!r}")
+            return SlurmJobStatus.Failed
 
     async def _watch_job(
-        self, job: SlurmJob, configuration: BaseJobConfiguration
+        self,
+        job: SlurmJob,
+        configuration: BaseJobConfiguration,
+        logger: PrefectLogAdapter,
     ) -> SlurmJobStatus:
-        await asyncio.sleep(configuration.update_interval_sec)
+        # await asyncio.sleep(configuration.update_interval_sec)
+        await asyncio.sleep(2)
         while (
-            status := await self._get_job_status(job)
+            status := await self._get_job_status(job, logger)
         ) in SlurmJobStatus.waitable():
             await asyncio.sleep(configuration.update_interval_sec)
         return status
@@ -262,7 +294,7 @@ async def run_process_pipe_script(
     logger: PrefectLogAdapter | None = None,
     stream_output: bool | tuple[TextSink | None, TextSink | None] = False,
     **kwargs,
-):
+) -> str:
     """
     Like `anyio.run_process` but with:
 
@@ -295,15 +327,17 @@ async def run_process_pipe_script(
             else:
                 raise ValueError("cannot reach stdin")
 
-        if stream_output:
-            debug(f"Streaming output of {process.pid}")
-            await consume_process_output(
-                process,
-                stdout_sink=stream_output[0],
-                stderr_sink=stream_output[1],
-            )
+        # if stream_output:
+        #     debug(f"Streaming output of {process.pid}")
+        #     await consume_process_output(
+        #         process,
+        #         stdout_sink=stream_output[0],
+        #         stderr_sink=stream_output[1],
+        #     )
 
         debug(f"Waiting {process.pid}")
         await process.wait()
-
-    return process
+        if process.stdout is not None:
+            return (await process.stdout.receive()).decode()
+        else:
+            return ""
