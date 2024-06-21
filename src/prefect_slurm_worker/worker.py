@@ -17,10 +17,7 @@ from prefect.server.schemas.core import Flow
 from prefect.server.schemas.responses import DeploymentResponse
 from prefect.states import Cancelled
 from prefect.utilities.filesystem import relative_path_to_current_platform
-from prefect.utilities.processutils import (  # consume_process_output,
-    TextSink,
-    open_process,
-)
+from prefect.utilities.processutils import TextSink, open_process
 from prefect.workers.base import (
     BaseJobConfiguration,
     BaseVariables,
@@ -61,43 +58,6 @@ class SlurmJobStatus(str, Enum):
 
     def __repr__(self) -> str:
         return self.value
-
-
-# class SlurmJobDefinition(BaseModel):
-#     partition: str | None = Field(
-#         default=None,
-#         description="Partition on which the job will run",
-#     )
-#     time_limit: timedelta | None = Field(
-#         default=None,
-#         # default=timedelta(hours=1),
-#         # default="01:00:00",
-#         description="Maximum Walltime",
-#     )
-#     tasks: int | None = Field(
-#         default=None,
-#         description="Number of MPI tasks",
-#     )
-#     name: str = Field(
-#         default="prefect",
-#         description="Name of the SLURM job",
-#     )
-#     nodes: str = Field(
-#         default=1,
-#         description="Number of nodes for the SLURM job",
-#     )
-#     current_working_directory: Path = Field(
-#         description="Working directory",
-#     )
-#     # environment: dict[str, str] = Field(
-#     #     default={
-#     #         "PATH": "/bin:/usr/bin/:/usr/local/bin/",
-#     #         "LD_LIBRARY_PATH": "/lib/:/lib64/:/usr/local/lib",
-#     #     },
-#     #     description="Environment variables",
-#     # )
-#     # output: str = Field(default="output.log")
-#     # error: str = Field(default="error.log")
 
 
 class SlurmJob(BaseModel):
@@ -319,8 +279,6 @@ class SlurmWorker(BaseWorker):
             command.append(f"--chdir={configuration.working_dir.as_posix()}")
         logger.info(f"Command:\n{' '.join(command)}")
         logger.info(f"Script:\n{script}")
-        # out_sink = anyio.create_memory_object_stream()
-        # err_sink = anyio.create_memory_object_stream()
         output = await run_process_pipe_script(
             command=command,
             script=script,
@@ -372,7 +330,6 @@ class SlurmWorker(BaseWorker):
         configuration: BaseJobConfiguration,
         logger: PrefectLogAdapter,
     ) -> SlurmJob:
-        # await asyncio.sleep(configuration.update_interval_sec)
         seen_statuses = set()
         job = None
         async for job in self._watch_job(job_id, logger):
@@ -380,13 +337,11 @@ class SlurmWorker(BaseWorker):
                 seen_statuses.add(job.status)
             if job.status not in SlurmJobStatus.waitable():
                 return job
-            # await asyncio.sleep(configuration.update_interval_sec)
-            await asyncio.sleep(5)
+            await asyncio.sleep(configuration.update_interval_sec)
         if job is None:
             return SlurmJob(id=job_id, status=SlurmJobStatus.FAILED, exit_code=-1)
         else:
             return job
-        # TODO: emit change event
 
 
 async def run_process_pipe_script(
