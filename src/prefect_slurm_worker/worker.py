@@ -2,15 +2,19 @@ import asyncio
 import subprocess
 import sys
 from datetime import timedelta
-from enum import IntEnum
+from enum import Enum
 from pathlib import Path
+from typing import AsyncGenerator
 
+import anyio
 import anyio.abc
-from prefect._internal.pydantic import HAS_PYDANTIC_V2
 from prefect.client.schemas import FlowRun
+from prefect.engine import propose_state
 from prefect.logging.loggers import PrefectLogAdapter
+from prefect.pydantic import BaseModel, Field, field_validator
 from prefect.server.schemas.core import Flow
 from prefect.server.schemas.responses import DeploymentResponse
+from prefect.states import Cancelled
 from prefect.utilities.filesystem import relative_path_to_current_platform
 from prefect.utilities.processutils import (  # consume_process_output,
     TextSink,
@@ -21,32 +25,40 @@ from prefect.workers.base import (
     BaseWorker,
     BaseWorkerResult,
 )
-from pydantic import BaseModel
-
-if HAS_PYDANTIC_V2:
-    from pydantic.v1 import Field, validator
-else:
-    from pydantic import Field, validator
 
 
-class SlurmJobStatus(IntEnum):
-    Pending = 0
-    Running = 1
-    Suspended = 2
-    Complete = 3
-    Cancelled = 4
-    Failed = 5
-    Timeout = 6
-    Nodefail = 7
-    Preempted = 8
-    Bootfail = 9
-    Deadline = 10
-    Oom = 11
-    End = 12
+class SlurmJobStatus(str, Enum):
+    BOOT_FAIL = "BOOT_FAIL"
+    CANCELLED = "CANCELLED"
+    COMPLETED = "COMPLETED"
+    CONFIGURING = "CONFIGURING"
+    COMPLETING = "COMPLETING"
+    DEADLINE = "DEADLINE"
+    FAILED = "FAILED"
+    NODE_FAIL = "NODE_FAIL"
+    OUT_OF_MEMORY = "OUT_OF_MEMORY"
+    PENDING = "PENDING"
+    PREEMPTED = "PREEMPTED"
+    RUNNING = "RUNNING"
+    RESV_DEL_HOLD = "RESV_DEL_HOLD"
+    REQUEUE_FED = "REQUEUE_FED"
+    REQUEUE_HOLD = "REQUEUE_HOLD"
+    REQUEUED = "REQUEUED"
+    RESIZING = "RESIZING"
+    REVOKED = "REVOKED"
+    SIGNALING = "SIGNALING"
+    SPECIAL_EXIT = "SPECIAL_EXIT"
+    STAGE_OUT = "STAGE_OUT"
+    STOPPED = "STOPPED"
+    SUSPENDED = "SUSPENDED"
+    TIMEOUT = "TIMEOUT"
 
     @classmethod
     def waitable(cls) -> list["SlurmJobStatus"]:
-        return [cls.Pending, cls.Preempted, cls.Running]
+        return [cls.PENDING, cls.PREEMPTED, cls.RUNNING]
+
+    def __repr__(self) -> str:
+        return self.value
 
 
 # class SlurmJobDefinition(BaseModel):
@@ -88,10 +100,11 @@ class SlurmJobStatus(IntEnum):
 
 class SlurmJob(BaseModel):
     id: int | None
+    status: SlurmJobStatus | None = None
+    exit_code: int | None = None
 
 
 class SlurmJobConfiguration(BaseJobConfiguration):
-
     """
     SlurmJobConfiguration defines the SLURM configuration for a particular job.
 
@@ -125,7 +138,19 @@ class SlurmJobConfiguration(BaseJobConfiguration):
         description="Interval in seconds to poll for job updates",
     )
 
-    @validator("working_dir")
+    modules: list[int] = Field(
+        default_factory=list,
+        title="Modules",
+        description="Names of modules to load for job",
+    )
+
+    conda_environment: str | None = Field(
+        default=None,
+        title="Conda environment",
+        description="Name of conda environment",
+    )
+
+    @field_validator("working_dir")
     def validate_command(cls, v):
         """
         Make sure that the working directory is formatted for the current platform.
@@ -163,41 +188,55 @@ class SlurmWorker(BaseWorker):
         flow_run: FlowRun,
         configuration: SlurmJobConfiguration,
         task_status: anyio.abc.TaskStatus | None = None,
-    ) -> SlurmWorkerResult:
-        flow_run_logger = self.get_flow_run_logger(flow_run)
-        flow_run_logger.debug(
-            f"configuration.command:\n{configuration.command}"
-        )
+    ) -> BaseWorkerResult:
+        self._logger = self.get_flow_run_logger(flow_run)
         script = self._submit_script(configuration)
-        flow_run_logger.debug(f"script:\n{script}")
-        job = await self._create_and_start_job(
-            script,
-            configuration,
-            flow_run_logger,
-        )
-        flow_run_logger.warning(f"job: {job}")
+        job_id = await self._create_and_start_job(script, configuration, self._logger)
+        self._logger.info(f"SlurmJob submitted with id: {job_id}.")
         if task_status:
             # Use a unique ID to mark the run as started. This ID is later used to tear down infrastructure
             # if the flow run is cancelled.
-            task_status.started(job.id)
-        job_status = await self._watch_job(job, configuration, flow_run_logger)
-        flow_run_logger.warning(f"status: {job_status}")
-        exit_code = job_status.value if job_status else -1
-        return SlurmWorkerResult(
-            status_code=exit_code,
-            identifier=job.id,
-        )
+            task_status.started(job_id)
+        job = await self._watch_job_safe(job_id, configuration, self._logger)
+        if job.status == SlurmJobStatus.CANCELLED:
+            state = await propose_state(
+                self._client,
+                Cancelled(message="This flow run has been cancelled by Slurm."),
+                flow_run_id=flow_run.id,
+            )
+            job.exit_code = 0
+        self._logger.info(f"SlurmJob ended: {job}")
+        return SlurmWorkerResult(status_code=job.exit_code, identifier=job.id)
 
     async def kill_infrastructure(
         self,
         infrastructure_pid: str,
-        configuration: BaseJobConfiguration,
+        configuration: SlurmJobConfiguration,
         grace_seconds: int = 30,
     ) -> None:
         # Tear down the execution environment
-        print(infrastructure_pid)
-        return
-        # await self._kill_job(infrastructure_pid, configuration)
+        self._logger.info(f"Sending SIGKILL to job with id: {infrastructure_pid}")
+        command = [
+            "scancel",
+            infrastructure_pid,
+            "--signal=SIGKILL",
+        ]
+        self._logger.info(f"{command=}")
+        await run_process_pipe_script(command=command)
+        # await asyncio.sleep(grace_seconds)
+        # async for job in self._watch_job(infrastructure_pid, self._logger):
+        #     if job.status in SlurmJobStatus.waitable():
+        #         self._logger.info(
+        #             f"Sending SIGKILL to job with id: {infrastructure_pid}"
+        #         )
+        #         command = [
+        #             "scancel",
+        #             f"--job={infrastructure_pid}",
+        #             "--signal=SIGKILL",
+        #         ]
+        #         self._logger.info(f"{command=}")
+        #         await run_process_pipe_script(command=command)
+        #     return
 
     def _submit_script(self, configuration: SlurmJobConfiguration) -> str:
         """
@@ -205,34 +244,37 @@ class SlurmWorker(BaseWorker):
         """
         script = ["#!/bin/bash"]
 
-        command = configuration.command or self._base_flow_run_command()
-        script += [command]
+        if configuration.modules:
+            script.append("module purge")
+            for module_name in configuration.modules:
+                script.append(f"module load {module_name}")
+
+        if configuration.conda_environment is not None:
+            script.append(f"conda activate {configuration.conda_environment}")
+
+        script.append(configuration.command)
 
         return "\n".join(script)
-
-    @staticmethod
-    def _base_flow_run_command() -> str:
-        """
-        Generate a command for a flow run job.
-        """
-        return "python -m prefect.engine"
 
     async def _create_and_start_job(
         self,
         script: str,
         configuration: SlurmJobConfiguration,
         logger: PrefectLogAdapter,
-    ) -> SlurmJob:
-        command = ["sbatch", "--parsable"]
-        command.append(f"--nodes={configuration.num_nodes}")
-        command.append(f"--ntasks={configuration.num_processes_per_node}")
-        command.append(f"--time={configuration.time_limit.seconds // 60}")
+    ) -> int | None:
+        command = [
+            "sbatch",
+            "--parsable",
+            f"--nodes={configuration.num_nodes}",
+            f"--ntasks={configuration.num_processes_per_node}",
+            f"--time={configuration.time_limit.seconds // 60}",
+        ]
         if configuration.partition is not None:
             command.append(f"--partition={configuration.partition}")
         if configuration.working_dir is not None:
             command.append(f"--chdir={configuration.working_dir.as_posix()}")
-        logger.debug(f"Command:\n{' '.join(command)}")
-        logger.debug(f"Script:\n{script}")
+        logger.info(f"Command:\n{' '.join(command)}")
+        logger.info(f"Script:\n{script}")
         # out_sink = anyio.create_memory_object_stream()
         # err_sink = anyio.create_memory_object_stream()
         output = await run_process_pipe_script(
@@ -245,47 +287,63 @@ class SlurmWorker(BaseWorker):
         )
         try:
             job_id = int(output.strip())
-            return SlurmJob(id=job_id)
-        except Exception as e:
-            logger.exception(e)
-            return SlurmJob(id=None)
+        except ValueError:
+            job_id = None
+        return job_id
 
-    async def _get_job_status(
+    async def _watch_job(
         self,
-        job: SlurmJob,
+        job_id: int | None,
         logger: PrefectLogAdapter,
-    ) -> SlurmJobStatus:
-        if job.id is None:
-            return SlurmJobStatus.Failed
+    ) -> AsyncGenerator[SlurmJob, None]:
+        if job_id is None:
+            yield SlurmJob(id=job_id, status=SlurmJobStatus.FAILED, exit_code=-1)
         else:
             command = [
                 "squeue",
-                f"--job={job.id}",
+                f"--job={job_id}",
                 "--noheader",
                 "--state=all",
                 "--Format=State,exit_code",
             ]
-            output = await run_process_pipe_script(
-                command=command,
-                script=None,
-                stream_output=True,
-            )
-            logger.warning(f"{output!r}")
-            return SlurmJobStatus.Failed
+            while True:
+                output = await run_process_pipe_script(
+                    command=command,
+                    script=None,
+                    stream_output=True,
+                    logger=logger,
+                )
+                if output:
+                    status, exit_code = output.strip().split()
+                    yield SlurmJob(
+                        id=job_id,
+                        status=SlurmJobStatus(status),
+                        exit_code=int(exit_code),
+                    )
+                else:
+                    return
 
-    async def _watch_job(
+    async def _watch_job_safe(
         self,
-        job: SlurmJob,
+        job_id: int | None,
         configuration: BaseJobConfiguration,
         logger: PrefectLogAdapter,
-    ) -> SlurmJobStatus:
+    ) -> SlurmJob:
         # await asyncio.sleep(configuration.update_interval_sec)
-        await asyncio.sleep(2)
-        while (
-            status := await self._get_job_status(job, logger)
-        ) in SlurmJobStatus.waitable():
-            await asyncio.sleep(configuration.update_interval_sec)
-        return status
+        seen_statuses = set()
+        job = None
+        async for job in self._watch_job(job_id, logger):
+            if job.status not in seen_statuses:
+                seen_statuses.add(job.status)
+            if job.status not in SlurmJobStatus.waitable():
+                return job
+            # await asyncio.sleep(configuration.update_interval_sec)
+            await asyncio.sleep(5)
+        if job is None:
+            return SlurmJob(id=job_id, status=SlurmJobStatus.FAILED, exit_code=-1)
+        else:
+            return job
+        # TODO: emit change event
 
 
 async def run_process_pipe_script(
@@ -338,6 +396,9 @@ async def run_process_pipe_script(
         debug(f"Waiting {process.pid}")
         await process.wait()
         if process.stdout is not None:
-            return (await process.stdout.receive()).decode()
+            try:
+                return (await process.stdout.receive()).decode()
+            except anyio.EndOfStream:
+                return ""
         else:
             return ""
