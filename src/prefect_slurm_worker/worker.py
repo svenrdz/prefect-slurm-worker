@@ -22,6 +22,7 @@ from prefect.utilities.processutils import (  # consume_process_output,
 )
 from prefect.workers.base import (
     BaseJobConfiguration,
+    BaseVariables,
     BaseWorker,
     BaseWorkerResult,
 )
@@ -138,7 +139,7 @@ class SlurmJobConfiguration(BaseJobConfiguration):
         description="Interval in seconds to poll for job updates",
     )
 
-    modules: list[int] = Field(
+    modules: list[str] = Field(
         default_factory=list,
         title="Modules",
         description="Names of modules to load for job",
@@ -172,6 +173,47 @@ class SlurmJobConfiguration(BaseJobConfiguration):
         super().prepare_for_flow_run(flow_run, deployment, flow)
 
 
+class SlurmJobVariables(BaseVariables):
+    """
+    SlurmJobVariables define the set of variables that can be defined at
+    submission time of a new job and will be used to template a SlurmJobConfiguration.
+    """
+
+    stream_output: bool = Field(default=True)
+    working_dir: Path | None = Field(default=None)
+
+    num_nodes: int = Field(default=1)
+    num_processes_per_node: int = Field(default=1)
+    time_limit: timedelta = Field(
+        default=timedelta(hours=1),
+        title="Time limit",
+        # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
+    )
+    partition: str | None = Field(
+        default=None,
+        title="Slurm partition",
+        description="The SLURM partition (queue) jobs are submitted to",
+    )
+
+    update_interval_sec: int = Field(
+        default=30,
+        title="Update Interval",
+        description="Interval in seconds to poll for job updates",
+    )
+
+    modules: list[str] = Field(
+        default_factory=list,
+        title="Modules",
+        description="Names of modules to load for job",
+    )
+
+    conda_environment: str | None = Field(
+        default=None,
+        title="Conda environment",
+        description="Name of conda environment",
+    )
+
+
 class SlurmWorkerResult(BaseWorkerResult):
     """SLURM worker result class"""
 
@@ -181,6 +223,7 @@ class SlurmWorker(BaseWorker):
 
     type = "slurm-worker"
     job_configuration = SlurmJobConfiguration
+    job_configuration_variables = SlurmJobVariables
     _description = "SLURM worker."
 
     async def run(
