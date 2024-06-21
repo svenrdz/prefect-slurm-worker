@@ -1,4 +1,5 @@
 import asyncio
+import os
 import subprocess
 import sys
 from datetime import timedelta
@@ -325,8 +326,7 @@ class SlurmWorker(BaseWorker):
             script=script,
             logger=logger,
             stream_output=True,
-            # stream_output=(out_sink[0], err_sink[0]),
-            env=configuration.env,
+            env=os.environ | configuration.env,
         )
         try:
             job_id = int(output.strip())
