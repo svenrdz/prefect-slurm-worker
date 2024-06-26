@@ -1,4 +1,6 @@
 import asyncio
+import tempfile
+import contextlib
 import os
 import subprocess
 import sys
@@ -194,8 +196,7 @@ class SlurmWorker(BaseWorker):
         task_status: anyio.abc.TaskStatus | None = None,
     ) -> BaseWorkerResult:
         self._logger = self.get_flow_run_logger(flow_run)
-        script = self._submit_script(configuration)
-        job_id = await self._create_and_start_job(script, configuration, self._logger)
+        job_id = await self._create_and_start_job(configuration, self._logger)
         self._logger.info(f"SlurmJob submitted with id: {job_id}.")
         if task_status:
             # Use a unique ID to mark the run as started. This ID is later used to tear down infrastructure
@@ -262,10 +263,10 @@ class SlurmWorker(BaseWorker):
 
     async def _create_and_start_job(
         self,
-        script: str,
         configuration: SlurmJobConfiguration,
         logger: PrefectLogAdapter,
     ) -> int | None:
+        script = self._submit_script(configuration)
         command = [
             "sbatch",
             "--parsable",
@@ -275,17 +276,22 @@ class SlurmWorker(BaseWorker):
         ]
         if configuration.partition is not None:
             command.append(f"--partition={configuration.partition}")
-        if configuration.working_dir is not None:
-            command.append(f"--chdir={configuration.working_dir.as_posix()}")
-        logger.info(f"Command:\n{' '.join(command)}")
-        logger.info(f"Script:\n{script}")
-        output = await run_process_pipe_script(
-            command=command,
-            script=script,
-            logger=logger,
-            stream_output=True,
-            env=os.environ | configuration.env,
+        working_dir_ctx = (
+            tempfile.TemporaryDirectory(suffix="prefect")
+            if not configuration.working_dir
+            else contextlib.nullcontext(configuration.working_dir)
         )
+        with working_dir_ctx as working_dir:
+            command.append(f"--chdir={working_dir}")
+            logger.info(f"Command:\n{' '.join(command)}")
+            logger.info(f"Script:\n{script}")
+            output = await run_process_pipe_script(
+                command=command,
+                script=script,
+                logger=logger,
+                stream_output=True,
+                env=os.environ | configuration.env,
+            )
         try:
             job_id = int(output.strip())
         except ValueError:
