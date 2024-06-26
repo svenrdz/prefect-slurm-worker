@@ -1,6 +1,6 @@
 [project]
 name = "prefect-slurm-worker"
-version = "0.3.0"
+version = "0.4.0"
 description = "Default template for PDM package"
 authors = [
     {name = "svenrdz", email = "svenbmr@gmail.com"},
