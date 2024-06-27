@@ -1,9 +1,9 @@
 import asyncio
-import tempfile
 import contextlib
 import os
 import subprocess
 import sys
+import tempfile
 from datetime import timedelta
 from enum import Enum
 from pathlib import Path
@@ -196,21 +196,21 @@ class SlurmWorker(BaseWorker):
         task_status: anyio.abc.TaskStatus | None = None,
     ) -> BaseWorkerResult:
         self._logger = self.get_flow_run_logger(flow_run)
-        job_id = await self._create_and_start_job(configuration, self._logger)
-        self._logger.info(f"SlurmJob submitted with id: {job_id}.")
+        job_id = await self._create_and_start_job(configuration)
+        self.log_info(f"SlurmJob submitted with id: {job_id}.")
         if task_status:
             # Use a unique ID to mark the run as started. This ID is later used to tear down infrastructure
             # if the flow run is cancelled.
             task_status.started(job_id)
-        job = await self._watch_job_safe(job_id, configuration, self._logger)
-        if job.status == SlurmJobStatus.CANCELLED:
-            state = await propose_state(
+        job = await self._watch_job_safe(job_id, configuration)
+        if job.status == SlurmJobStatus.CANCELLED and self._client is not None:
+            await propose_state(
                 self._client,
                 Cancelled(message="This flow run has been cancelled by Slurm."),
                 flow_run_id=flow_run.id,
             )
             job.exit_code = 0
-        self._logger.info(f"SlurmJob ended: {job}")
+        self.log_info(f"SlurmJob ended: {job}")
         return SlurmWorkerResult(status_code=job.exit_code, identifier=job.id)
 
     async def kill_infrastructure(
@@ -220,18 +220,18 @@ class SlurmWorker(BaseWorker):
         grace_seconds: int = 30,
     ) -> None:
         # Tear down the execution environment
-        self._logger.info(f"Sending SIGKILL to job with id: {infrastructure_pid}")
         command = [
             "scancel",
             infrastructure_pid,
             "--signal=SIGKILL",
         ]
-        self._logger.info(f"{command=}")
+        self.log_info(f"Sending SIGKILL to job with id: {infrastructure_pid}")
+        self.log_info(f"{command=}")
         await run_process_pipe_script(command=command)
         # await asyncio.sleep(grace_seconds)
-        # async for job in self._watch_job(infrastructure_pid, self._logger):
+        # async for job in self._watch_job(infrastructure_pid):
         #     if job.status in SlurmJobStatus.waitable():
-        #         self._logger.info(
+        #         self.log_info(
         #             f"Sending SIGKILL to job with id: {infrastructure_pid}"
         #         )
         #         command = [
@@ -239,7 +239,7 @@ class SlurmWorker(BaseWorker):
         #             f"--job={infrastructure_pid}",
         #             "--signal=SIGKILL",
         #         ]
-        #         self._logger.info(f"{command=}")
+        #         self.log_info(f"{command=}")
         #         await run_process_pipe_script(command=command)
         #     return
 
@@ -262,9 +262,7 @@ class SlurmWorker(BaseWorker):
         return "\n".join(script)
 
     async def _create_and_start_job(
-        self,
-        configuration: SlurmJobConfiguration,
-        logger: PrefectLogAdapter,
+        self, configuration: SlurmJobConfiguration
     ) -> int | None:
         script = self._submit_script(configuration)
         command = [
@@ -283,12 +281,12 @@ class SlurmWorker(BaseWorker):
         )
         with working_dir_ctx as working_dir:
             command.append(f"--chdir={working_dir}")
-            logger.info(f"Command:\n{' '.join(command)}")
-            logger.info(f"Script:\n{script}")
+            self.log_info(f"Command:\n{' '.join(command)}")
+            self.log_info(f"Script:\n{script}")
             output = await run_process_pipe_script(
                 command=command,
                 script=script,
-                logger=logger,
+                logger=self.logger,
                 stream_output=True,
                 env=os.environ | configuration.env,
             )
@@ -298,11 +296,7 @@ class SlurmWorker(BaseWorker):
             job_id = None
         return job_id
 
-    async def _watch_job(
-        self,
-        job_id: int | None,
-        logger: PrefectLogAdapter,
-    ) -> AsyncGenerator[SlurmJob, None]:
+    async def _watch_job(self, job_id: int | None) -> AsyncGenerator[SlurmJob, None]:
         if job_id is None:
             yield SlurmJob(id=job_id, status=SlurmJobStatus.FAILED, exit_code=-1)
         else:
@@ -318,7 +312,7 @@ class SlurmWorker(BaseWorker):
                     command=command,
                     script=None,
                     stream_output=True,
-                    logger=logger,
+                    logger=self.logger,
                 )
                 if output:
                     status, exit_code = output.strip().split()
@@ -334,11 +328,10 @@ class SlurmWorker(BaseWorker):
         self,
         job_id: int | None,
         configuration: BaseJobConfiguration,
-        logger: PrefectLogAdapter,
     ) -> SlurmJob:
         seen_statuses = set()
         job = None
-        async for job in self._watch_job(job_id, logger):
+        async for job in self._watch_job(job_id):
             if job.status not in seen_statuses:
                 seen_statuses.add(job.status)
             if job.status not in SlurmJobStatus.waitable():
@@ -348,6 +341,20 @@ class SlurmWorker(BaseWorker):
             return SlurmJob(id=job_id, status=SlurmJobStatus.FAILED, exit_code=-1)
         else:
             return job
+
+    @property
+    def logger(self) -> PrefectLogAdapter | None:
+        if hasattr(self, "_logger"):
+            return self._logger
+        else:
+            return None
+
+    def log_info(self, msg: str):
+        logger = self.logger
+        if logger is not None:
+            logger.info(msg)
+        else:
+            print(msg)
 
 
 async def run_process_pipe_script(
