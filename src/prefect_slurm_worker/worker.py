@@ -11,6 +11,7 @@ from typing import AsyncGenerator
 
 import anyio
 import anyio.abc
+import pendulum
 from prefect.client.schemas import FlowRun
 from prefect.engine import propose_state
 from prefect.logging.loggers import PrefectLogAdapter
@@ -81,38 +82,44 @@ class SlurmJobConfiguration(BaseJobConfiguration):
     """
 
     stream_output: bool = Field(default=True)
-    working_dir: Path | None = Field(default=None)
-    log_path: Path | None = Field(default=None)
+    working_dir: Path | None = Field(default=None, title="Slurm job chdir")
+    log_path: Path | None = Field(default=None, title="Slurm job output.")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
-    time_limit: timedelta = Field(
-        default=timedelta(hours=1),
-        title="Time limit",
+    time_limit: pendulum.Duration = Field(
+        default=pendulum.Duration(hours=1),
+        title="Slurm job time limit (in seconds)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
     partition: str | None = Field(
         default=None,
         title="Slurm partition",
-        description="The SLURM partition (queue) jobs are submitted to",
+        description="The SLURM partition (queue) jobs are submitted to.",
+    )
+    memory: int | None = Field(
+        default=None,
+        pattern="^[0-9]{1,9}[M|G]",
+        title="Slurm memory limit",
+        description="The SLURM memory for the job.",
     )
 
     update_interval_sec: int = Field(
         default=30,
         title="Update Interval",
-        description="Interval in seconds to poll for job updates",
+        description="Interval in seconds to poll for job updates.",
     )
 
     modules: list[str] = Field(
         default_factory=list,
         title="Modules",
-        description="Names of modules to load for job",
+        description="Names of modules to load for slurm job.",
     )
 
     conda_environment: str | None = Field(
         default=None,
         title="Conda environment",
-        description="Name of conda environment",
+        description="Name of conda environment loaded inside slurm job.",
     )
 
     @field_validator("working_dir")
@@ -144,38 +151,44 @@ class SlurmJobVariables(BaseVariables):
     """
 
     stream_output: bool = Field(default=True)
-    working_dir: Path | None = Field(default=None)
-    log_path: Path | None = Field(default=None)
+    working_dir: Path | None = Field(default=None, title="Slurm job chdir")
+    log_path: Path | None = Field(default=None, title="Slurm job output.")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
-    time_limit: timedelta = Field(
-        default=timedelta(hours=1),
-        title="Time limit",
+    time_limit: pendulum.Duration = Field(
+        default=pendulum.Duration(hours=1),
+        title="Slurm job time limit (in seconds)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
     partition: str | None = Field(
         default=None,
         title="Slurm partition",
-        description="The SLURM partition (queue) jobs are submitted to",
+        description="The SLURM partition (queue) jobs are submitted to.",
+    )
+    memory: int | None = Field(
+        default=None,
+        pattern="^[0-9]{1,9}[M|G]",
+        title="Slurm memory limit",
+        description="The SLURM memory for the job.",
     )
 
     update_interval_sec: int = Field(
         default=30,
         title="Update Interval",
-        description="Interval in seconds to poll for job updates",
+        description="Interval in seconds to poll for job updates.",
     )
 
     modules: list[str] = Field(
         default_factory=list,
         title="Modules",
-        description="Names of modules to load for job",
+        description="Names of modules to load for slurm job.",
     )
 
     conda_environment: str | None = Field(
         default=None,
         title="Conda environment",
-        description="Name of conda environment",
+        description="Name of conda environment loaded inside slurm job.",
     )
 
 
@@ -274,6 +287,8 @@ class SlurmWorker(BaseWorker):
             f"--ntasks={configuration.num_processes_per_node}",
             f"--time={configuration.time_limit.seconds // 60}",
         ]
+        if configuration.memory is not None:
+            command.append(f"--mem={configuration.memory}")
         if configuration.partition is not None:
             command.append(f"--partition={configuration.partition}")
         if configuration.log_path is not None:
