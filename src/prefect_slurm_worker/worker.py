@@ -82,6 +82,7 @@ class SlurmJobConfiguration(BaseJobConfiguration):
 
     stream_output: bool = Field(default=True)
     working_dir: Path | None = Field(default=None)
+    log_path: Path | None = Field(default=None)
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
@@ -144,6 +145,7 @@ class SlurmJobVariables(BaseVariables):
 
     stream_output: bool = Field(default=True)
     working_dir: Path | None = Field(default=None)
+    log_path: Path | None = Field(default=None)
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
@@ -274,6 +276,8 @@ class SlurmWorker(BaseWorker):
         ]
         if configuration.partition is not None:
             command.append(f"--partition={configuration.partition}")
+        if configuration.log_path is not None:
+            command.append(f"--output={configuration.log_path}")
         working_dir_ctx = (
             tempfile.TemporaryDirectory(suffix="prefect")
             if not configuration.working_dir
