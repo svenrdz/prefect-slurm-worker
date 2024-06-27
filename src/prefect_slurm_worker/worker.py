@@ -4,7 +4,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 from typing import AsyncGenerator
@@ -82,14 +81,14 @@ class SlurmJobConfiguration(BaseJobConfiguration):
     """
 
     stream_output: bool = Field(default=True)
-    working_dir: Path | None = Field(default=None, title="Slurm job chdir")
-    log_path: Path | None = Field(default=None, title="Slurm job output.")
+    working_dir: Path | None = Field(default=None, description="Slurm job chdir")
+    log_path: Path | None = Field(default=None, description="Slurm job output.")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
     time_limit: pendulum.Duration = Field(
         default=pendulum.Duration(hours=1),
-        title="Slurm job time limit (in seconds)",
+        description="Slurm job time limit (in seconds)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
     partition: str | None = Field(
@@ -97,9 +96,9 @@ class SlurmJobConfiguration(BaseJobConfiguration):
         title="Slurm partition",
         description="The SLURM partition (queue) jobs are submitted to.",
     )
-    memory: int | None = Field(
+    memory: str | None = Field(
         default=None,
-        pattern="^[0-9]{1,9}[M|G]",
+        pattern="^[0-9]{1,9}[M|G]$",
         title="Slurm memory limit",
         description="The SLURM memory for the job.",
     )
@@ -151,14 +150,14 @@ class SlurmJobVariables(BaseVariables):
     """
 
     stream_output: bool = Field(default=True)
-    working_dir: Path | None = Field(default=None, title="Slurm job chdir")
-    log_path: Path | None = Field(default=None, title="Slurm job output.")
+    working_dir: Path | None = Field(default=None, description="Slurm job chdir")
+    log_path: Path | None = Field(default=None, description="Slurm job output.")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
     time_limit: pendulum.Duration = Field(
         default=pendulum.Duration(hours=1),
-        title="Slurm job time limit (in seconds)",
+        description="Slurm job time limit (in seconds)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
     partition: str | None = Field(
@@ -166,9 +165,9 @@ class SlurmJobVariables(BaseVariables):
         title="Slurm partition",
         description="The SLURM partition (queue) jobs are submitted to.",
     )
-    memory: int | None = Field(
+    memory: str | None = Field(
         default=None,
-        pattern="^[0-9]{1,9}[M|G]",
+        pattern="^[0-9]{1,9}[M|G]$",
         title="Slurm memory limit",
         description="The SLURM memory for the job.",
     )
