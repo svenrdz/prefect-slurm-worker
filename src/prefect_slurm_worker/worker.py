@@ -1,23 +1,18 @@
 import asyncio
-import contextlib
 import os
 import subprocess
 import sys
-import tempfile
 from enum import Enum
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional, Union
 
 import anyio
 import anyio.abc
 import pendulum
 from prefect.client.schemas import FlowRun
-from prefect.engine import propose_state
+from prefect.client.schemas.objects import Flow
+from prefect.client.schemas.responses import DeploymentResponse
 from prefect.logging.loggers import PrefectLogAdapter
-from prefect.pydantic import BaseModel, Field, field_validator
-from prefect.server.schemas.core import Flow
-from prefect.server.schemas.responses import DeploymentResponse
-from prefect.states import Cancelled
 from prefect.utilities.filesystem import relative_path_to_current_platform
 from prefect.utilities.processutils import TextSink, open_process
 from prefect.workers.base import (
@@ -26,6 +21,7 @@ from prefect.workers.base import (
     BaseWorker,
     BaseWorkerResult,
 )
+from pydantic import BaseModel, Field, field_validator
 
 
 class SlurmJobStatus(str, Enum):
@@ -63,9 +59,9 @@ class SlurmJobStatus(str, Enum):
 
 
 class SlurmJob(BaseModel):
-    id: int | None
-    status: SlurmJobStatus | None = None
-    exit_code: int | None = None
+    id: Optional[int]
+    status: Optional[SlurmJobStatus] = None
+    exit_code: Optional[int] = None
 
 
 class SlurmJobConfiguration(BaseJobConfiguration):
@@ -81,22 +77,22 @@ class SlurmJobConfiguration(BaseJobConfiguration):
     """
 
     stream_output: bool = Field(default=True)
-    working_dir: Path | None = Field(default=None, description="Slurm job chdir")
-    log_path: Path | None = Field(default=None, description="Slurm job output.")
+    working_dir: Optional[Path] = Field(default=None, description="Slurm job chdir")
+    log_path: Optional[Path] = Field(default=None, description="Slurm job output.")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
-    time_limit: pendulum.Duration = Field(
-        default=pendulum.Duration(hours=1),
+    time_limit: int = Field(
+        default=pendulum.Duration(hours=1).seconds,
         description="Slurm job time limit (in seconds)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
-    partition: str | None = Field(
+    partition: Optional[str] = Field(
         default=None,
         title="Slurm partition",
         description="The SLURM partition (queue) jobs are submitted to.",
     )
-    memory: str | None = Field(
+    memory: Optional[str] = Field(
         default=None,
         pattern="^[0-9]{1,9}[M|G]$",
         title="Slurm memory limit",
@@ -115,7 +111,7 @@ class SlurmJobConfiguration(BaseJobConfiguration):
         description="Names of modules to load for slurm job.",
     )
 
-    conda_environment: str | None = Field(
+    conda_environment: Optional[str] = Field(
         default=None,
         title="Conda environment",
         description="Name of conda environment loaded inside slurm job.",
@@ -133,8 +129,8 @@ class SlurmJobConfiguration(BaseJobConfiguration):
     def prepare_for_flow_run(
         self,
         flow_run: FlowRun,
-        deployment: DeploymentResponse | None = None,
-        flow: Flow | None = None,
+        deployment: Optional[DeploymentResponse] = None,
+        flow: Optional[Flow] = None,
     ):
         """
         Prepare the flow run by setting some important environment variables and
@@ -150,22 +146,22 @@ class SlurmJobVariables(BaseVariables):
     """
 
     stream_output: bool = Field(default=True)
-    working_dir: Path | None = Field(default=None, description="Slurm job chdir")
-    log_path: Path | None = Field(default=None, description="Slurm job output.")
+    working_dir: Optional[Path] = Field(default=None, description="Slurm job chdir")
+    log_path: Optional[Path] = Field(default=None, description="Slurm job output.")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
-    time_limit: pendulum.Duration = Field(
-        default=pendulum.Duration(hours=1),
+    time_limit: int = Field(
+        default=pendulum.Duration(hours=1).seconds,
         description="Slurm job time limit (in seconds)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
-    partition: str | None = Field(
+    partition: Optional[str] = Field(
         default=None,
         title="Slurm partition",
         description="The SLURM partition (queue) jobs are submitted to.",
     )
-    memory: str | None = Field(
+    memory: Optional[str] = Field(
         default=None,
         pattern="^[0-9]{1,9}[M|G]$",
         title="Slurm memory limit",
@@ -184,7 +180,7 @@ class SlurmJobVariables(BaseVariables):
         description="Names of modules to load for slurm job.",
     )
 
-    conda_environment: str | None = Field(
+    conda_environment: Optional[str] = Field(
         default=None,
         title="Conda environment",
         description="Name of conda environment loaded inside slurm job.",
@@ -207,7 +203,7 @@ class SlurmWorker(BaseWorker):
         self,
         flow_run: FlowRun,
         configuration: SlurmJobConfiguration,
-        task_status: anyio.abc.TaskStatus | None = None,
+        task_status: Optional[anyio.abc.TaskStatus] = None,
     ) -> BaseWorkerResult:
         self._logger = self.get_flow_run_logger(flow_run)
         job_id = await self._create_and_start_job(configuration)
@@ -218,11 +214,13 @@ class SlurmWorker(BaseWorker):
             task_status.started(job_id)
         job = await self._watch_job_safe(job_id, configuration)
         if job.status == SlurmJobStatus.CANCELLED and self._client is not None:
-            await propose_state(
-                self._client,
-                Cancelled(message="This flow run has been cancelled by Slurm."),
-                flow_run_id=flow_run.id,
-            )
+            await self._mark_flow_run_as_cancelled(flow_run)
+            # await self._client.set_flow_run_state(flow_run.id, state, force=True)
+            # await propose_state(
+            #     self._client,
+            #     Cancelled(message="This flow run has been cancelled by Slurm."),
+            #     flow_run_id=flow_run.id,
+            # )
             job.exit_code = 0
         self.log_info(f"SlurmJob ended: {job}")
         return SlurmWorkerResult(status_code=job.exit_code, identifier=job.id)
@@ -263,6 +261,10 @@ class SlurmWorker(BaseWorker):
         """
         script = ["#!/bin/bash"]
 
+        if configuration.working_dir:
+            script.append(f"mkdir -p {configuration.working_dir}")
+            script.append(f"cd {configuration.working_dir}")
+
         if configuration.modules:
             script.append("module purge")
             for module_name in configuration.modules:
@@ -277,7 +279,7 @@ class SlurmWorker(BaseWorker):
 
     async def _create_and_start_job(
         self, configuration: SlurmJobConfiguration
-    ) -> int | None:
+    ) -> Optional[int]:
         script = self._submit_script(configuration)
         command = [
             "sbatch",
@@ -292,29 +294,22 @@ class SlurmWorker(BaseWorker):
             command.append(f"--partition={configuration.partition}")
         if configuration.log_path is not None:
             command.append(f"--output={configuration.log_path}")
-        working_dir_ctx = (
-            tempfile.TemporaryDirectory(suffix="prefect")
-            if not configuration.working_dir
-            else contextlib.nullcontext(configuration.working_dir)
+        self.log_info(f"Command:\n{' '.join(command)}")
+        self.log_info(f"Script:\n{script}")
+        output = await run_process_pipe_script(
+            command=command,
+            script=script,
+            logger=self.logger,
+            stream_output=True,
+            env=os.environ | configuration.env,
         )
-        with working_dir_ctx as working_dir:
-            command.append(f"--chdir={working_dir}")
-            self.log_info(f"Command:\n{' '.join(command)}")
-            self.log_info(f"Script:\n{script}")
-            output = await run_process_pipe_script(
-                command=command,
-                script=script,
-                logger=self.logger,
-                stream_output=True,
-                env=os.environ | configuration.env,
-            )
         try:
             job_id = int(output.strip())
         except ValueError:
             job_id = None
         return job_id
 
-    async def _watch_job(self, job_id: int | None) -> AsyncGenerator[SlurmJob, None]:
+    async def _watch_job(self, job_id: Optional[int]) -> AsyncGenerator[SlurmJob, None]:
         if job_id is None:
             yield SlurmJob(id=job_id, status=SlurmJobStatus.FAILED, exit_code=-1)
         else:
@@ -344,8 +339,8 @@ class SlurmWorker(BaseWorker):
 
     async def _watch_job_safe(
         self,
-        job_id: int | None,
-        configuration: BaseJobConfiguration,
+        job_id: Optional[int],
+        configuration: SlurmJobConfiguration,
     ) -> SlurmJob:
         seen_statuses = set()
         job = None
@@ -361,7 +356,7 @@ class SlurmWorker(BaseWorker):
             return job
 
     @property
-    def logger(self) -> PrefectLogAdapter | None:
+    def logger(self) -> Optional[PrefectLogAdapter]:
         if hasattr(self, "_logger"):
             return self._logger
         else:
@@ -377,9 +372,9 @@ class SlurmWorker(BaseWorker):
 
 async def run_process_pipe_script(
     command: list[str],
-    script: str | None = None,
-    logger: PrefectLogAdapter | None = None,
-    stream_output: bool | tuple[TextSink | None, TextSink | None] = False,
+    script: Optional[str] = None,
+    logger: Optional[PrefectLogAdapter] = None,
+    stream_output: Union[bool, tuple[Optional[TextSink], Optional[TextSink]]] = False,
     **kwargs,
 ) -> str:
     """
