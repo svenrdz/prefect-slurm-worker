@@ -286,7 +286,7 @@ class SlurmWorker(BaseWorker):
             "--parsable",
             f"--nodes={configuration.num_nodes}",
             f"--ntasks={configuration.num_processes_per_node}",
-            f"--time={configuration.time_limit.seconds // 60}",
+            f"--time={configuration.time_limit // 60}",
         ]
         if configuration.memory is not None:
             command.append(f"--mem={configuration.memory}")
