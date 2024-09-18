@@ -59,7 +59,7 @@ class SlurmJobStatus(str, Enum):
 
 
 class SlurmJob(BaseModel):
-    id: Optional[int]
+    id: Optional[str]
     status: Optional[SlurmJobStatus] = None
     exit_code: Optional[int] = None
 
@@ -279,7 +279,7 @@ class SlurmWorker(BaseWorker):
 
     async def _create_and_start_job(
         self, configuration: SlurmJobConfiguration
-    ) -> Optional[int]:
+    ) -> Optional[str]:
         script = self._submit_script(configuration)
         command = [
             "sbatch",
@@ -304,12 +304,14 @@ class SlurmWorker(BaseWorker):
             env=os.environ | configuration.env,
         )
         try:
-            job_id = int(output.strip())
+            job_id = output.strip()
+            # fails if it's not integer but we don't need the integer itself
+            int(job_id)
         except ValueError:
             job_id = None
         return job_id
 
-    async def _watch_job(self, job_id: Optional[int]) -> AsyncGenerator[SlurmJob, None]:
+    async def _watch_job(self, job_id: Optional[str]) -> AsyncGenerator[SlurmJob, None]:
         if job_id is None:
             yield SlurmJob(id=job_id, status=SlurmJobStatus.FAILED, exit_code=-1)
         else:
@@ -339,7 +341,7 @@ class SlurmWorker(BaseWorker):
 
     async def _watch_job_safe(
         self,
-        job_id: Optional[int],
+        job_id: Optional[str],
         configuration: SlurmJobConfiguration,
     ) -> SlurmJob:
         seen_statuses = set()
