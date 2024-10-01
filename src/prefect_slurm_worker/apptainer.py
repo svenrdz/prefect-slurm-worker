@@ -3,6 +3,7 @@ from os import PathLike
 from typing import Optional
 from warnings import warn
 
+from prefect.utilities.dockerutils import get_prefect_image_name
 from prefect_docker import DockerRegistryCredentials
 from pydantic import AnyUrl, Field
 
@@ -22,7 +23,10 @@ class ImageType(str, Enum):
 
 
 class ApptainerSlurmJobConfiguration(SlurmJobConfiguration):
-    image: str = Field(description="Apptainer image url or path")
+    image: str = Field(
+        default_factory=get_prefect_image_name,
+        description="Apptainer image url or path",
+    )
     image_type: ImageType = Field(
         default=ImageType.Docker,
         description="Type of image, determines the URI scheme for image pulling",
@@ -38,27 +42,30 @@ class ApptainerSlurmJobConfiguration(SlurmJobConfiguration):
     )
 
 
-class ApptainerSlurmJobVariables(SlurmJobVariables):
-    image: str = Field(description="Apptainer image url or path")
-    image_type: ImageType = Field(
-        default=ImageType.Docker,
-        description="Type of image, determines the URI scheme for image pulling",
-    )
-    binds: list[str] = Field(
-        default_factory=list,
-        description="List of paths to bind to the container instance",
-    )
-    registry_credentials: Optional[DockerRegistryCredentials] = Field(
-        default=None,
-        title="Docker registry credentials",
-        description="Docker registry credentials, required for private registries",
-    )
+# class ApptainerSlurmJobVariables(SlurmJobVariables):
+#     image: str = Field(
+#         default_factory=get_prefect_image_name,
+#         description="Apptainer image url or path",
+#     )
+#     image_type: ImageType = Field(
+#         default=ImageType.Docker,
+#         description="Type of image, determines the URI scheme for image pulling",
+#     )
+#     binds: list[str] = Field(
+#         default_factory=list,
+#         description="List of paths to bind to the container instance",
+#     )
+#     registry_credentials: Optional[DockerRegistryCredentials] = Field(
+#         default=None,
+#         title="Docker registry credentials",
+#         description="Docker registry credentials, required for private registries",
+#     )
 
 
 class ApptainerSlurmWorker(SlurmWorker):
     type = "apptainer-slurm-worker"
     job_configuration = ApptainerSlurmJobConfiguration
-    job_configuration_variables = ApptainerSlurmJobVariables
+    # job_configuration_variables = ApptainerSlurmJobVariables
     _description = "SLURM worker for Apptainer jobs."
 
     def _submit_script(self, configuration: ApptainerSlurmJobConfiguration) -> str:
