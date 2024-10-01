@@ -87,22 +87,23 @@ class ApptainerSlurmWorker(SlurmWorker):
             )
 
         if configuration.binds:
-            self._logger.info("Adding binds to environment")
+            self.logger.info("Adding binds to environment")
             configuration.env["APPTAINER_BIND"] = ",".join(configuration.binds)
 
-        match configuration.image_type:
-            case ImageType.Docker:
-                if configuration.registry_credentials:
-                    self.logger.info("Adding registry login details to environment")
-                    configuration.env["APPTAINER_DOCKER_USERNAME"] = (
-                        configuration.registry_credentials.username
-                    )
-                    configuration.env["APPTAINER_DOCKER_PASSWORD"] = (
-                        configuration.registry_credentials.username
-                    )
-                image = f"docker://{configuration.image}"
-            case ImageType.Apptainer:
-                image = configuration.image
+        if configuration.image_type == ImageType.Docker:
+            if configuration.registry_credentials:
+                self.logger.info("Adding registry login details to environment")
+                configuration.env["APPTAINER_DOCKER_USERNAME"] = (
+                    configuration.registry_credentials.username
+                )
+                configuration.env["APPTAINER_DOCKER_PASSWORD"] = (
+                    configuration.registry_credentials.username
+                )
+            image = f"docker://{configuration.image}"
+        elif ImageType.Apptainer:
+            image = configuration.image
+        else:
+            raise TypeError(configuration.image_type)
 
         apptainer_command = ["apptainer", "run", image]
         if configuration.command:
