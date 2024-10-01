@@ -2,9 +2,10 @@ import asyncio
 import os
 import subprocess
 import sys
+import uuid
 from enum import Enum
 from pathlib import Path
-from typing import AsyncGenerator, Mapping, Optional, Union
+from typing import AsyncGenerator, Mapping, Optional, TextIO
 
 import anyio
 import anyio.abc
@@ -14,7 +15,7 @@ from prefect.client.schemas.objects import Flow
 from prefect.client.schemas.responses import DeploymentResponse
 from prefect.logging.loggers import PrefectLogAdapter
 from prefect.utilities.filesystem import relative_path_to_current_platform
-from prefect.utilities.processutils import TextSink, open_process
+from prefect.utilities.processutils import open_process
 from prefect.workers.base import (
     BaseJobConfiguration,
     BaseVariables,
@@ -78,13 +79,14 @@ class SlurmJobConfiguration(BaseJobConfiguration):
 
     stream_output: bool = Field(default=True)
     working_dir: Optional[Path] = Field(default=None, description="Slurm job chdir")
-    log_path: Optional[Path] = Field(default=None, description="Slurm job output.")
+    log_path: Optional[Path] = Field(default=None, description="Slurm job output")
+    err_path: Optional[Path] = Field(default=None, description="Slurm job error output")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
     time_limit: int = Field(
-        default=pendulum.Duration(hours=1).seconds,
-        description="Slurm job time limit (in seconds)",
+        default=pendulum.Duration(hours=1).minutes,
+        description="Slurm job time limit (in minutes)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
     partition: Optional[str] = Field(
@@ -147,13 +149,14 @@ class SlurmJobVariables(BaseVariables):
 
     stream_output: bool = Field(default=True)
     working_dir: Optional[Path] = Field(default=None, description="Slurm job chdir")
-    log_path: Optional[Path] = Field(default=None, description="Slurm job output.")
+    log_path: Optional[Path] = Field(default=None, description="Slurm job output")
+    err_path: Optional[Path] = Field(default=None, description="Slurm job error output")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
     time_limit: int = Field(
-        default=pendulum.Duration(hours=1).seconds,
-        description="Slurm job time limit (in seconds)",
+        default=pendulum.Duration(hours=1).minutes,
+        description="Slurm job time limit (in minutes)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
     partition: Optional[str] = Field(
@@ -206,12 +209,34 @@ class SlurmWorker(BaseWorker):
         task_status: Optional[anyio.abc.TaskStatus] = None,
     ) -> BaseWorkerResult:
         self._logger = self.get_flow_run_logger(flow_run)
+        if configuration.log_path is None:
+            tmp_output = Path.home() / f".{uuid.uuid4()}.log"
+            tmp_output.parent.mkdir(exist_ok=True)
+            configuration.log_path = tmp_output
+        else:
+            tmp_output = None
+        if configuration.err_path is None:
+            tmp_error = Path.home() / f".{uuid.uuid4()}.err"
+            tmp_error.parent.mkdir(exist_ok=True)
+            configuration.err_path = tmp_error
+        else:
+            tmp_error = None
         job_id = await self._create_and_start_job(configuration)
         self.log_info(f"SlurmJob submitted with id: {job_id}.")
         if task_status:
             # Use a unique ID to mark the run as started. This ID is later used to tear down infrastructure
             # if the flow run is cancelled.
             task_status.started(job_id)
+        stream_tasks = []
+        if configuration.stream_output:
+            if configuration.log_path is not None:
+                stream_tasks.append(
+                    asyncio.create_task(tail_f(configuration.log_path, sys.stdout))
+                )
+            if configuration.err_path is not None:
+                stream_tasks.append(
+                    asyncio.create_task(tail_f(configuration.err_path, sys.stderr))
+                )
         job = await self._watch_job_safe(job_id, configuration)
         if job.status == SlurmJobStatus.CANCELLED and self._client is not None:
             await self._mark_flow_run_as_cancelled(flow_run)
@@ -223,7 +248,17 @@ class SlurmWorker(BaseWorker):
             # )
             job.exit_code = 0
         self.log_info(f"SlurmJob ended: {job}")
-        return SlurmWorkerResult(status_code=job.exit_code, identifier=job.id)
+        for task in stream_tasks:
+            if not task.done():
+                task.cancel()
+        if tmp_output is not None:
+            tmp_output.unlink()
+        if tmp_error is not None:
+            tmp_error.unlink()
+        return SlurmWorkerResult(
+            status_code=job.exit_code or -1,
+            identifier=job.id or "",
+        )
 
     async def kill_infrastructure(
         self,
@@ -273,7 +308,8 @@ class SlurmWorker(BaseWorker):
         if configuration.conda_environment is not None:
             script.append(f"conda activate {configuration.conda_environment}")
 
-        script.append(configuration.command)
+        if configuration.command is not None:
+            script.append(configuration.command)
 
         return "\n".join(script)
 
@@ -286,7 +322,7 @@ class SlurmWorker(BaseWorker):
             "--parsable",
             f"--nodes={configuration.num_nodes}",
             f"--ntasks={configuration.num_processes_per_node}",
-            f"--time={configuration.time_limit // 60}",
+            f"--time={configuration.time_limit}",
         ]
         if configuration.memory is not None:
             command.append(f"--mem={configuration.memory}")
@@ -294,13 +330,15 @@ class SlurmWorker(BaseWorker):
             command.append(f"--partition={configuration.partition}")
         if configuration.log_path is not None:
             command.append(f"--output={configuration.log_path}")
+        if configuration.err_path is not None:
+            command.append(f"--error={configuration.err_path}")
         self.log_info(f"Command:\n{' '.join(command)}")
         self.log_info(f"Script:\n{script}")
         output = await run_process_pipe_script(
             command=command,
             script=script,
             logger=self.logger,
-            stream_output=True,
+            catch_output=True,
             env=os.environ | configuration.env,
         )
         try:
@@ -326,7 +364,7 @@ class SlurmWorker(BaseWorker):
                 output = await run_process_pipe_script(
                     command=command,
                     script=None,
-                    stream_output=True,
+                    catch_output=True,
                     logger=self.logger,
                 )
                 if output:
@@ -376,26 +414,22 @@ async def run_process_pipe_script(
     command: list[str],
     script: Optional[str] = None,
     logger: Optional[PrefectLogAdapter] = None,
-    stream_output: Union[bool, tuple[Optional[TextSink], Optional[TextSink]]] = False,
+    catch_output: bool = False,
     env: Mapping[str, str] | None = None,
 ) -> str:
     """
     Like `anyio.run_process` but with:
 
     - Use of our `open_process` utility to ensure resources are cleaned up
-    - Simple `stream_output` support to connect the subprocess to the parent stdout/err
     - Support for submission with `TaskGroup.start` marking as 'started' after the
         process has been created. When used, the PID is returned to the task status.
 
     """
-    if stream_output is True:
-        stream_output = (sys.stdout, sys.stderr)
-
     async with open_process(
         command,
         stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE if stream_output else subprocess.DEVNULL,
-        stderr=subprocess.PIPE if stream_output else subprocess.DEVNULL,
+        stdout=subprocess.PIPE if catch_output else subprocess.DEVNULL,
+        # stderr=subprocess.PIPE if stream_output else subprocess.DEVNULL,
         env=env,
     ) as process:
         if logger is None:
@@ -410,15 +444,6 @@ async def run_process_pipe_script(
                 await process.stdin.aclose()
             else:
                 raise ValueError("cannot reach stdin")
-
-        # if stream_output:
-        #     debug(f"Streaming output of {process.pid}")
-        #     await consume_process_output(
-        #         process,
-        #         stdout_sink=stream_output[0],
-        #         stderr_sink=stream_output[1],
-        #     )
-
         debug(f"Waiting {process.pid}")
         await process.wait()
         if process.stdout is not None:
@@ -428,3 +453,28 @@ async def run_process_pipe_script(
                 return ""
         else:
             return ""
+
+
+async def tail_f(
+    path: Path,
+    sink: TextIO,
+):
+    found = False
+    for _ in range(10):
+        if path.is_file():
+            found = True
+            break
+        else:
+            await asyncio.sleep(1)
+    if not found:
+        return
+    async with (
+        await anyio.open_file(path) as f,
+        anyio.wrap_file(sink) as asink,
+    ):
+        while True:
+            line = await f.readline()
+            if line:
+                await asink.write(line)
+            else:
+                await asyncio.sleep(1)

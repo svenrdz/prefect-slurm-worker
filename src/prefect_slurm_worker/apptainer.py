@@ -105,7 +105,7 @@ class ApptainerSlurmWorker(SlurmWorker):
             raise TypeError(configuration.image_type)
 
         apptainer_command = ["apptainer", "run", image]
-        if configuration.command:
+        if configuration.command is not None:
             apptainer_command.append(configuration.command)
 
         script.append(" ".join(apptainer_command))
