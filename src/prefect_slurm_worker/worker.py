@@ -4,7 +4,7 @@ import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import AsyncGenerator, Optional, Union
+from typing import AsyncGenerator, Mapping, Optional, Union
 
 import anyio
 import anyio.abc
@@ -377,7 +377,7 @@ async def run_process_pipe_script(
     script: Optional[str] = None,
     logger: Optional[PrefectLogAdapter] = None,
     stream_output: Union[bool, tuple[Optional[TextSink], Optional[TextSink]]] = False,
-    **kwargs,
+    env: Mapping[str, str] | None = None,
 ) -> str:
     """
     Like `anyio.run_process` but with:
@@ -396,7 +396,7 @@ async def run_process_pipe_script(
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE if stream_output else subprocess.DEVNULL,
         stderr=subprocess.PIPE if stream_output else subprocess.DEVNULL,
-        **kwargs,
+        env=env,
     ) as process:
         if logger is None:
             debug = print

@@ -1,19 +1,14 @@
 from enum import Enum
-from os import PathLike
 from typing import Optional
-from warnings import warn
 
 from prefect.utilities.dockerutils import get_prefect_image_name
 from prefect_docker.credentials import DockerRegistryCredentials
-from pydantic import AnyUrl, Field
+from pydantic import Field
 
 from prefect_slurm_worker.worker import (
-    SlurmJob,
     SlurmJobConfiguration,
-    SlurmJobStatus,
     SlurmJobVariables,
     SlurmWorker,
-    SlurmWorkerResult,
 )
 
 
@@ -101,7 +96,7 @@ class ApptainerSlurmWorker(SlurmWorker):
                     configuration.registry_credentials.username
                 )
                 configuration.env["APPTAINER_DOCKER_PASSWORD"] = (
-                    configuration.registry_credentials.username
+                    configuration.registry_credentials.password.get_secret_value()
                 )
             image = f"docker://{configuration.image}"
         elif ImageType.Apptainer:
