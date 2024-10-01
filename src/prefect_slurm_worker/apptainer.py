@@ -25,7 +25,9 @@ class ImageType(str, Enum):
 class ApptainerSlurmJobConfiguration(SlurmJobConfiguration):
     image: str = Field(
         default_factory=get_prefect_image_name,
-        description="Apptainer image url or path",
+        description="The apptainer or docker image reference of a container image to use for created jobs. "
+        "If not set, the latest Prefect docker image will be used.",
+        examples=["docker.io/prefecthq/prefect:3-latest"],
     )
     image_type: ImageType = Field(
         default=ImageType.Docker,
@@ -65,6 +67,7 @@ class ApptainerSlurmJobConfiguration(SlurmJobConfiguration):
 class ApptainerSlurmWorker(SlurmWorker):
     type = "apptainer-slurm-worker"
     job_configuration = ApptainerSlurmJobConfiguration
+    job_configuration_variables = None
     # job_configuration_variables = ApptainerSlurmJobVariables
     _description = "SLURM worker for Apptainer jobs."
 
