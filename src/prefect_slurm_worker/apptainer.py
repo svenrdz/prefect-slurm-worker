@@ -22,7 +22,7 @@ class ImageType(str, Enum):
 
 
 class ApptainerSlurmJobConfiguration(SlurmJobConfiguration):
-    image: AnyUrl = Field(description="Apptainer image url or path")
+    image: str = Field(description="Apptainer image url or path")
     image_type: ImageType = Field(
         default=ImageType.Docker,
         description="Type of image, determines the URI scheme for image pulling",
@@ -39,7 +39,11 @@ class ApptainerSlurmJobConfiguration(SlurmJobConfiguration):
 
 
 class ApptainerSlurmJobVariables(SlurmJobVariables):
-    image: AnyUrl = Field(description="Apptainer image url or path")
+    image: str = Field(description="Apptainer image url or path")
+    image_type: ImageType = Field(
+        default=ImageType.Docker,
+        description="Type of image, determines the URI scheme for image pulling",
+    )
     binds: list[str] = Field(
         default_factory=list,
         description="List of paths to bind to the container instance",
