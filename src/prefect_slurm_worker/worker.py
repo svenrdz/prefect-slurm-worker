@@ -241,9 +241,9 @@ class SlurmWorker(BaseWorker):
         ):
             self._logger.error(configuration.err_path.read_text())
         if tmp_output is not None:
-            tmp_output.unlink()
+            tmp_output.unlink(missing_ok=True)
         if tmp_error is not None:
-            tmp_error.unlink()
+            tmp_error.unlink(missing_ok=True)
         return SlurmWorkerResult(
             status_code=job.exit_code or -1,
             identifier=job.id or "",
