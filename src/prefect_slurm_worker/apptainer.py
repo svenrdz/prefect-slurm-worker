@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Optional
 
+from prefect.logging.loggers import PrefectLogAdapter
 from prefect.utilities.dockerutils import get_prefect_image_name
 from prefect_docker.credentials import DockerRegistryCredentials
 from pydantic import Field
@@ -67,7 +68,11 @@ class ApptainerSlurmWorker(SlurmWorker):
     job_configuration_variables = ApptainerSlurmJobVariables
     _description = "SLURM worker for Apptainer jobs."
 
-    def _submit_script(self, configuration: ApptainerSlurmJobConfiguration) -> str:
+    def _submit_script(
+        self,
+        configuration: ApptainerSlurmJobConfiguration,
+        logger: PrefectLogAdapter,
+    ) -> str:
         """
         Generate the submit script for the apptainer job
         """
@@ -78,20 +83,20 @@ class ApptainerSlurmWorker(SlurmWorker):
             script.append(f"cd {configuration.working_dir}")
 
         if configuration.modules:
-            self.logger.warn("`modules` variable is not used for apptainer jobs")
+            logger.warning("`modules` variable is not used for apptainer jobs")
 
         if configuration.conda_environment is not None:
-            self.logger.warn(
+            logger.warning(
                 "`conda_environment` variable is not used for apptainer jobs"
             )
 
         if configuration.binds:
-            self.logger.info("Adding binds to environment")
+            logger.info("Adding binds to environment")
             configuration.env["APPTAINER_BIND"] = ",".join(configuration.binds)
 
         if configuration.image_type == ImageType.Docker:
             if configuration.registry_credentials:
-                self.logger.info("Adding registry login details to environment")
+                logger.info("Adding registry login details to environment")
                 configuration.env["APPTAINER_DOCKER_USERNAME"] = (
                     configuration.registry_credentials.username
                 )
