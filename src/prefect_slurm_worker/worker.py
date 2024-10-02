@@ -234,9 +234,12 @@ class SlurmWorker(BaseWorker):
             # )
             job.exit_code = 0
         self._logger.info(f"SlurmJob ended: {job}")
-        if configuration.err_path is not None:
-            if job.status == SlurmJobStatus.FAILED:
-                self._logger.error(configuration.err_path.read_text())
+        if (
+            job.status == SlurmJobStatus.FAILED
+            and configuration.err_path is not None
+            and configuration.err_path.is_file()
+        ):
+            self._logger.error(configuration.err_path.read_text())
         if tmp_output is not None:
             tmp_output.unlink()
         if tmp_error is not None:
