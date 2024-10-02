@@ -1,11 +1,9 @@
 import asyncio
 import os
 import subprocess
-import sys
-import uuid
 from enum import Enum
 from pathlib import Path
-from typing import AsyncGenerator, Mapping, Optional, TextIO
+from typing import AsyncGenerator, Mapping, Optional
 
 import anyio
 import anyio.abc
@@ -14,6 +12,7 @@ from prefect.client.schemas import FlowRun
 from prefect.client.schemas.objects import Flow
 from prefect.client.schemas.responses import DeploymentResponse
 from prefect.logging.loggers import PrefectLogAdapter
+from prefect.settings import PREFECT_HOME
 from prefect.utilities.filesystem import relative_path_to_current_platform
 from prefect.utilities.processutils import open_process
 from prefect.workers.base import (
@@ -77,7 +76,6 @@ class SlurmJobConfiguration(BaseJobConfiguration):
     4) a conda environment to initiate for the run (that should probably be outsourced)
     """
 
-    stream_output: bool = Field(default=True)
     working_dir: Optional[Path] = Field(default=None, description="Slurm job chdir")
     log_path: Optional[Path] = Field(default=None, description="Slurm job output")
     err_path: Optional[Path] = Field(default=None, description="Slurm job error output")
@@ -147,7 +145,6 @@ class SlurmJobVariables(BaseVariables):
     submission time of a new job and will be used to template a SlurmJobConfiguration.
     """
 
-    stream_output: bool = Field(default=True)
     working_dir: Optional[Path] = Field(default=None, description="Slurm job chdir")
     log_path: Optional[Path] = Field(default=None, description="Slurm job output")
     err_path: Optional[Path] = Field(default=None, description="Slurm job error output")
@@ -209,34 +206,23 @@ class SlurmWorker(BaseWorker):
         task_status: Optional[anyio.abc.TaskStatus] = None,
     ) -> BaseWorkerResult:
         self._logger = self.get_flow_run_logger(flow_run)
+        prefect_home = Path(PREFECT_HOME.value())
         if configuration.log_path is None:
-            tmp_output = Path.home() / f".{uuid.uuid4()}.log"
-            tmp_output.parent.mkdir(exist_ok=True)
+            tmp_output = prefect_home / f".{flow_run.id}.log"
             configuration.log_path = tmp_output
         else:
             tmp_output = None
         if configuration.err_path is None:
-            tmp_error = Path.home() / f".{uuid.uuid4()}.err"
-            tmp_error.parent.mkdir(exist_ok=True)
+            tmp_error = prefect_home / f".{flow_run.id}.err"
             configuration.err_path = tmp_error
         else:
             tmp_error = None
         job_id = await self._create_and_start_job(configuration)
-        self.log_info(f"SlurmJob submitted with id: {job_id}.")
+        self._logger.info(f"SlurmJob submitted with id: {job_id}.")
         if task_status:
             # Use a unique ID to mark the run as started. This ID is later used to tear down infrastructure
             # if the flow run is cancelled.
             task_status.started(job_id)
-        stream_tasks = []
-        if configuration.stream_output:
-            if configuration.log_path is not None:
-                stream_tasks.append(
-                    asyncio.create_task(tail_f(configuration.log_path, sys.stdout))
-                )
-            if configuration.err_path is not None:
-                stream_tasks.append(
-                    asyncio.create_task(tail_f(configuration.err_path, sys.stderr))
-                )
         job = await self._watch_job_safe(job_id, configuration)
         if job.status == SlurmJobStatus.CANCELLED and self._client is not None:
             await self._mark_flow_run_as_cancelled(flow_run)
@@ -247,10 +233,10 @@ class SlurmWorker(BaseWorker):
             #     flow_run_id=flow_run.id,
             # )
             job.exit_code = 0
-        self.log_info(f"SlurmJob ended: {job}")
-        for task in stream_tasks:
-            if not task.done():
-                task.cancel()
+        self._logger.info(f"SlurmJob ended: {job}")
+        if configuration.err_path is not None:
+            if job.status == SlurmJobStatus.FAILED:
+                self._logger.error(configuration.err_path.read_text())
         if tmp_output is not None:
             tmp_output.unlink()
         if tmp_error is not None:
@@ -453,28 +439,3 @@ async def run_process_pipe_script(
                 return ""
         else:
             return ""
-
-
-async def tail_f(
-    path: Path,
-    sink: TextIO,
-):
-    found = False
-    for _ in range(10):
-        if path.is_file():
-            found = True
-            break
-        else:
-            await asyncio.sleep(1)
-    if not found:
-        return
-    async with (
-        await anyio.open_file(path) as f,
-        anyio.wrap_file(sink) as asink,
-    ):
-        while True:
-            line = await f.readline()
-            if line:
-                await asink.write(line)
-            else:
-                await asyncio.sleep(1)
