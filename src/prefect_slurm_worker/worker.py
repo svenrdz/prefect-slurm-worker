@@ -436,10 +436,13 @@ async def run_process_pipe_script(
                 raise ValueError("cannot reach stdin")
         debug(f"Waiting {process.pid}")
         await process.wait()
-        if process.stdout is not None:
+        if process.stdout is not None and process.stderr is not None:
             try:
                 return (await process.stdout.receive()).decode()
             except anyio.EndOfStream:
-                return ""
+                try:
+                    return (await process.stderr.receive()).decode()
+                except anyio.EndOfStream:
+                    return ""
         else:
             return ""
