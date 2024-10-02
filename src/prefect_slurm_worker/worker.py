@@ -335,6 +335,7 @@ class SlurmWorker(BaseWorker):
             # fails if it's not integer but we don't need the integer itself
             int(job_id)
         except ValueError:
+            self._logger.error(output)
             job_id = None
         return job_id
 
