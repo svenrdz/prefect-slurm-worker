@@ -83,7 +83,7 @@ class SlurmJobConfiguration(BaseJobConfiguration):
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
     time_limit: int = Field(
-        default=pendulum.Duration(hours=1).minutes,
+        default=pendulum.Duration(hours=1).in_minutes(),
         description="Slurm job time limit (in minutes)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
@@ -152,7 +152,7 @@ class SlurmJobVariables(BaseVariables):
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
     time_limit: int = Field(
-        default=pendulum.Duration(hours=1).minutes,
+        default=pendulum.Duration(hours=1).in_minutes(),
         description="Slurm job time limit (in minutes)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
@@ -419,7 +419,7 @@ async def run_process_pipe_script(
         command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE if catch_output else subprocess.DEVNULL,
-        # stderr=subprocess.PIPE if stream_output else subprocess.DEVNULL,
+        stderr=subprocess.PIPE if catch_output else subprocess.DEVNULL,
         env=env,
     ) as process:
         if logger is None:
