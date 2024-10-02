@@ -267,7 +267,7 @@ class SlurmWorker(BaseWorker):
         # await asyncio.sleep(grace_seconds)
         # async for job in self._watch_job(infrastructure_pid):
         #     if job.status in SlurmJobStatus.waitable():
-        #         self.log_info(
+        #         print(
         #             f"Sending SIGKILL to job with id: {infrastructure_pid}"
         #         )
         #         command = [
@@ -275,7 +275,7 @@ class SlurmWorker(BaseWorker):
         #             f"--job={infrastructure_pid}",
         #             "--signal=SIGKILL",
         #         ]
-        #         self.log_info(f"{command=}")
+        #         print(f"{command=}")
         #         await run_process_pipe_script(command=command)
         #     return
 
@@ -327,8 +327,8 @@ class SlurmWorker(BaseWorker):
             command.append(f"--output={configuration.log_path}")
         if configuration.err_path is not None:
             command.append(f"--error={configuration.err_path}")
-        self.log_info(f"Command:\n{' '.join(command)}")
-        self.log_info(f"Script:\n{script}")
+        logger.info(f"Command:\n{' '.join(command)}")
+        logger.info(f"Script:\n{script}")
         output = await run_process_pipe_script(
             command=command,
             script=script,
