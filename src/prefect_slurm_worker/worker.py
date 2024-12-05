@@ -334,7 +334,9 @@ class SlurmWorker(BaseWorker):
             script=script,
             logger=logger,
             catch_output=True,
-            env=os.environ | configuration.env,
+            env=os.environ
+            | configuration.env
+            | {"TMPDIR": f"/tmp/prefect-{os.environ['USER']}"},
         )
         try:
             job_id = output.strip()
