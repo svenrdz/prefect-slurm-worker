@@ -54,6 +54,10 @@ class SlurmJobStatus(str, Enum):
     def waitable(cls) -> list["SlurmJobStatus"]:
         return [cls.PENDING, cls.PREEMPTED, cls.RUNNING]
 
+    @classmethod
+    def errors(cls) -> list["SlurmJobStatus"]:
+        return [cls.FAILED, cls.OUT_OF_MEMORY, cls.TIMEOUT]
+
     def __repr__(self) -> str:
         return self.value
 
@@ -233,13 +237,12 @@ class SlurmWorker(BaseWorker):
             #     flow_run_id=flow_run.id,
             # )
             job.exit_code = 0
+        if job.status in SlurmJobStatus.errors() and configuration.err_path is not None:
+            if configuration.err_path.is_file():
+                logger.error(configuration.err_path.read_text())
+            else:
+                logger.error("An error occurred, but the logs are unavailable.")
         logger.info(f"SlurmJob ended: {job}")
-        if (
-            job.status == SlurmJobStatus.FAILED
-            and configuration.err_path is not None
-            and configuration.err_path.is_file()
-        ):
-            logger.error(configuration.err_path.read_text())
         if tmp_output is not None:
             tmp_output.unlink(missing_ok=True)
         if tmp_error is not None:
@@ -425,7 +428,7 @@ async def run_process_pipe_script(
             debug = print
         else:
             debug = logger.debug
-        debug(f"Command sent to {process.pid}")
+        debug(f"Process {process.pid} opened with command : {command}")
         if script is not None:
             if process.stdin is not None:
                 debug(f"Sending script to {process.pid} stdin")
