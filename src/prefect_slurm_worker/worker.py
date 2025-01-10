@@ -1,6 +1,7 @@
 import asyncio
 import os
 import subprocess
+import uuid
 from collections.abc import AsyncGenerator, Mapping
 from enum import Enum
 from pathlib import Path
@@ -365,7 +366,7 @@ class SlurmWorker(BaseWorker):
             catch_output=True,
             env=os.environ
             | configuration.env
-            | {"TMPDIR": f"/tmp/prefect-{os.environ['USER']}"},
+            | {"TMPDIR": f"/tmp/prefect-{os.environ.get('LOGNAME', uuid.uuid4())}"},
         )
         try:
             job_id = output.strip()
