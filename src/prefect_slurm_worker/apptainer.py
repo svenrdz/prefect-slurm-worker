@@ -73,9 +73,7 @@ class ApptainerSlurmWorker(SlurmWorker):
         configuration: ApptainerSlurmJobConfiguration,
         logger: PrefectLogAdapter,
     ) -> str:
-        """
-        Generate the submit script for the apptainer job
-        """
+        """Generate the submit script for the apptainer job"""
         script = ["#!/bin/bash"]
 
         if configuration.working_dir:
@@ -85,9 +83,9 @@ class ApptainerSlurmWorker(SlurmWorker):
         if configuration.modules:
             logger.warning("`modules` variable is not used for apptainer jobs")
 
-        if configuration.conda_environment is not None:
+        if configuration.python_environment is not None:
             logger.warning(
-                "`conda_environment` variable is not used for apptainer jobs"
+                "`python_environment` variable is not used for apptainer jobs",
             )
 
         if configuration.binds:

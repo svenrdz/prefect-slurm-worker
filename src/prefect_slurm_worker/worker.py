@@ -1,9 +1,10 @@
 import asyncio
 import os
 import subprocess
+from collections.abc import AsyncGenerator, Mapping
 from enum import Enum
 from pathlib import Path
-from typing import AsyncGenerator, Mapping, Optional, Union
+from typing import Literal, Optional, Union
 
 import anyio
 import anyio.abc
@@ -21,7 +22,7 @@ from prefect.workers.base import (
     BaseWorker,
     BaseWorkerResult,
 )
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SlurmJobStatus(str, Enum):
@@ -68,16 +69,20 @@ class SlurmJob(BaseModel):
     exit_code: Optional[int] = None
 
 
+class PythonEnvironment(BaseModel):
+    type: Literal["pip", "conda"]
+    path: Path
+
+
 class SlurmJobConfiguration(BaseJobConfiguration):
-    """
-    SlurmJobConfiguration defines the SLURM configuration for a particular job.
+    """SlurmJobConfiguration defines the SLURM configuration for a particular job.
 
     Currently only the most important options for a job are covered. This includes:
 
     1) which partition to run on
     2) walltime, number of nodes and number of cpus
     3) working directory
-    4) a conda environment to initiate for the run (that should probably be outsourced)
+    4) a python environment to activate for the run (that should probably be outsourced)
     """
 
     working_dir: Optional[Path] = Field(default=None, description="Slurm job chdir")
@@ -118,17 +123,30 @@ class SlurmJobConfiguration(BaseJobConfiguration):
     conda_environment: Optional[str] = Field(
         default=None,
         title="Conda environment",
-        description="Name of conda environment loaded inside slurm job.",
+        description="DEPRECATED: use python_environment",
+    )
+
+    python_environment: Optional[PythonEnvironment] = Field(
+        default=None,
+        title="Python environment",
+        description="Python environment loaded inside slurm job.",
     )
 
     @field_validator("working_dir")
     def validate_command(cls, v):
-        """
-        Make sure that the working directory is formatted for the current platform.
-        """
+        """Make sure that the working directory is formatted for the current platform."""
         if v:
             return relative_path_to_current_platform(v)
         return v
+
+    @model_validator(mode="after")
+    def _conda2python_environment(self):
+        if self.conda_environment is not None and self.python_environment is None:
+            self.python_environment = PythonEnvironment(
+                type="conda",
+                path=Path(self.conda_environment),
+            )
+        return self
 
     def prepare_for_flow_run(
         self,
@@ -136,16 +154,14 @@ class SlurmJobConfiguration(BaseJobConfiguration):
         deployment: Optional[DeploymentResponse] = None,
         flow: Optional[Flow] = None,
     ):
-        """
-        Prepare the flow run by setting some important environment variables and
+        """Prepare the flow run by setting some important environment variables and
         adjusting the execution environment.
         """
         super().prepare_for_flow_run(flow_run, deployment, flow)
 
 
 class SlurmJobVariables(BaseVariables):
-    """
-    SlurmJobVariables define the set of variables that can be defined at
+    """SlurmJobVariables define the set of variables that can be defined at
     submission time of a new job and will be used to template a SlurmJobConfiguration.
     """
 
@@ -187,7 +203,13 @@ class SlurmJobVariables(BaseVariables):
     conda_environment: Optional[str] = Field(
         default=None,
         title="Conda environment",
-        description="Name of conda environment loaded inside slurm job.",
+        description="DEPRECATED: use python_environment",
+    )
+
+    python_environment: Optional[PythonEnvironment] = Field(
+        default=None,
+        title="Python environment",
+        description="Python environment loaded inside slurm job.",
     )
 
 
@@ -287,9 +309,7 @@ class SlurmWorker(BaseWorker):
         configuration: SlurmJobConfiguration,
         logger: PrefectLogAdapter,
     ) -> str:
-        """
-        Generate the submit script for the slurm job
-        """
+        """Generate the submit script for the slurm job"""
         script = ["#!/bin/bash"]
 
         if configuration.working_dir:
@@ -301,8 +321,14 @@ class SlurmWorker(BaseWorker):
             for module_name in configuration.modules:
                 script.append(f"module load {module_name}")
 
-        if configuration.conda_environment is not None:
-            script.append(f"conda activate {configuration.conda_environment}")
+        if configuration.python_environment is not None:
+            if configuration.python_environment.type == "conda":
+                line = f"conda activate {configuration.python_environment.path}"
+            elif configuration.python_environment.type == "pip":
+                line = f"source {configuration.python_environment.path}/bin/activate"
+            else:
+                raise ValueError(configuration.python_environment.type)
+            script.append(line)
 
         if configuration.command is not None:
             script.append(configuration.command)
@@ -398,8 +424,7 @@ class SlurmWorker(BaseWorker):
             await asyncio.sleep(configuration.update_interval_sec)
         if job is None:
             return SlurmJob(id=job_id, status=SlurmJobStatus.FAILED, exit_code=-1)
-        else:
-            return job
+        return job
 
 
 async def run_process_pipe_script(
@@ -409,8 +434,7 @@ async def run_process_pipe_script(
     catch_output: bool = False,
     env: Union[Mapping[str, str], None] = None,
 ) -> str:
-    """
-    Like `anyio.run_process` but with:
+    """Like `anyio.run_process` but with:
 
     - Use of our `open_process` utility to ensure resources are cleaned up
     - Support for submission with `TaskGroup.start` marking as 'started' after the
