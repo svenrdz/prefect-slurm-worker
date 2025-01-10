@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.1] - 2025-01-10
+
+### 🐛 Bug Fixes
+
+- Use $LOGNAME, $USER may not be set (cron), fallback to uuid4
+- Linter issue
+
 ## [0.10.0] - 2025-01-10
 
 ### 🚀 Features

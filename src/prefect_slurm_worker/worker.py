@@ -433,7 +433,7 @@ async def run_process_pipe_script(
     script: Optional[str] = None,
     logger: Optional[PrefectLogAdapter] = None,
     catch_output: bool = False,
-    env: Union[Mapping[str, str], None] = None,
+    env: Union[Mapping[str, str | None], None] = None,
 ) -> str:
     """Like `anyio.run_process` but with:
 
