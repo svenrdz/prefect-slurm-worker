@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2025-01-10
+
+### 🚀 Features
+
+- Python_env (pip OR conda) replaces deprecated conda_env
+
+### 📚 Documentation
+
+- Add changelog file
+
 ## [0.9.0] - 2024-12-05
 
 ### 🚀 Features
