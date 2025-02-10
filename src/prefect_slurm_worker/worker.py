@@ -323,10 +323,11 @@ class SlurmWorker(BaseWorker):
                 script.append(f"module load {module_name}")
 
         if configuration.python_environment is not None:
+            path = configuration.python_environment.path.expanduser().absolute()
             if configuration.python_environment.type == "conda":
-                line = f"conda activate {configuration.python_environment.path}"
+                line = f"conda activate {path}"
             elif configuration.python_environment.type == "pip":
-                line = f"source {configuration.python_environment.path}/bin/activate"
+                line = f"source {path}/bin/activate"
             else:
                 raise ValueError(configuration.python_environment.type)
             script.append(line)

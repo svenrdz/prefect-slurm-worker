@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.2] - 2025-02-10
+
+### 🐛 Bug Fixes
+
+- Use expanduser on paths for python environment
+
 ## [0.10.1] - 2025-01-10
 
 ### 🐛 Bug Fixes

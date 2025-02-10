@@ -1,21 +1,16 @@
 [project]
 name = "prefect-slurm-worker"
-version = "0.10.1"
+version = "0.10.2"
 description = "Default template for PDM package"
-authors = [
-    {name = "svenrdz", email = "svenbmr@gmail.com"},
-]
-dependencies = [
-    "prefect[docker]>=3.0.3",
-]
+authors = [{ name = "svenrdz", email = "svenbmr@gmail.com" }]
+dependencies = ["prefect[docker]>=3.0.3"]
 readme = "README.md"
 requires-python = ">= 3.9"
-license = {text = "MIT"}
+license = { text = "MIT" }
 
 [project.entry-points."prefect.collections"]
 prefect_slurm_worker = "prefect_slurm_worker.worker"
 prefect_apptainer_slurm_worker = "prefect_slurm_worker.apptainer"
-
 
 [build-system]
 requires = ["hatchling"]
