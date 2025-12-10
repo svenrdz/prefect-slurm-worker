@@ -1,1 +1,3 @@
-from .worker import SlurmWorker  # noqa
+from .worker import SlurmWorker
+
+__all__ = ["SlurmWorker"]

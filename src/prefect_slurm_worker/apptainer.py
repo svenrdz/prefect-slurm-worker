@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import Optional
 
 from prefect.logging.loggers import PrefectLogAdapter
 from prefect.utilities.dockerutils import get_prefect_image_name
@@ -33,7 +32,7 @@ class ApptainerSlurmJobConfiguration(SlurmJobConfiguration):
         default_factory=list,
         description="List of paths to bind to the container instance",
     )
-    registry_credentials: Optional[DockerRegistryCredentials] = Field(
+    registry_credentials: DockerRegistryCredentials | None = Field(
         default=None,
         title="Docker registry credentials",
         description="Docker registry credentials, required for private registries",
@@ -55,7 +54,7 @@ class ApptainerSlurmJobVariables(SlurmJobVariables):
         default_factory=list,
         description="List of paths to bind to the container instance",
     )
-    registry_credentials: Optional[DockerRegistryCredentials] = Field(
+    registry_credentials: DockerRegistryCredentials | None = Field(
         default=None,
         title="Docker registry credentials",
         description="Docker registry credentials, required for private registries",
@@ -95,9 +94,7 @@ class ApptainerSlurmWorker(SlurmWorker):
         if configuration.image_type == ImageType.Docker:
             if configuration.registry_credentials:
                 logger.info("Adding registry login details to environment")
-                configuration.env["APPTAINER_DOCKER_USERNAME"] = (
-                    configuration.registry_credentials.username
-                )
+                configuration.env["APPTAINER_DOCKER_USERNAME"] = configuration.registry_credentials.username
                 configuration.env["APPTAINER_DOCKER_PASSWORD"] = (
                     configuration.registry_credentials.password.get_secret_value()
                 )
