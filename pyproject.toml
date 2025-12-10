@@ -1,9 +1,9 @@
 [project]
 name = "prefect-slurm-worker"
-version = "0.10.2"
+version = "0.11.0"
 description = "Default template for PDM package"
 authors = [{ name = "svenrdz", email = "svenbmr@gmail.com" }]
-dependencies = ["prefect[docker]>=3.0.3"]
+dependencies = ["prefect[docker]>=3.3"]
 readme = "README.md"
 requires-python = ">= 3.10"
 license = { text = "MIT" }

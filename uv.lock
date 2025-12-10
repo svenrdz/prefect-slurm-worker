@@ -1328,14 +1328,14 @@ wheels = [
 
 [[package]]
 name = "prefect-slurm-worker"
-version = "0.10.2"
+version = "0.11.0"
 source = { editable = "." }
 dependencies = [
     { name = "prefect", extra = ["docker"] },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "prefect", extras = ["docker"], specifier = ">=3.0.3" }]
+requires-dist = [{ name = "prefect", extras = ["docker"], specifier = ">=3.3" }]
 
 [[package]]
 name = "prometheus-client"
