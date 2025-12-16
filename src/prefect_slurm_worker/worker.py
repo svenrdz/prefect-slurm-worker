@@ -11,7 +11,8 @@ import anyio
 import anyio.abc
 import pendulum
 from prefect.client.schemas import FlowRun
-from prefect.client.schemas.objects import Flow
+from prefect.client.schemas.objects import Flow as APIFlow
+from prefect.client.schemas.objects import WorkPool
 from prefect.client.schemas.responses import DeploymentResponse
 from prefect.logging.loggers import PrefectLogAdapter
 from prefect.settings import PREFECT_HOME
@@ -153,12 +154,14 @@ class SlurmJobConfiguration(BaseJobConfiguration):
         self,
         flow_run: FlowRun,
         deployment: DeploymentResponse | None = None,
-        flow: Flow | None = None,
+        flow: APIFlow | None = None,
+        work_pool: WorkPool | None = None,
+        worker_name: str | None = None,
     ):
         """Prepare the flow run by setting some important environment variables and
         adjusting the execution environment.
         """
-        super().prepare_for_flow_run(flow_run, deployment, flow)
+        super().prepare_for_flow_run(flow_run, deployment, flow, work_pool, worker_name)
 
 
 class SlurmJobVariables(BaseVariables):
