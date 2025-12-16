@@ -5,7 +5,7 @@ import uuid
 from collections.abc import AsyncGenerator, Mapping
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Literal
 
 import anyio
 import anyio.abc
@@ -65,9 +65,9 @@ class SlurmJobStatus(str, Enum):
 
 
 class SlurmJob(BaseModel):
-    id: Optional[str]
-    status: Optional[SlurmJobStatus] = None
-    exit_code: Optional[int] = None
+    id: str | None
+    status: SlurmJobStatus | None = None
+    exit_code: int | None = None
 
 
 class PythonEnvironment(BaseModel):
@@ -86,9 +86,9 @@ class SlurmJobConfiguration(BaseJobConfiguration):
     4) a python environment to activate for the run (that should probably be outsourced)
     """
 
-    working_dir: Optional[Path] = Field(default=None, description="Slurm job chdir")
-    log_path: Optional[Path] = Field(default=None, description="Slurm job output")
-    err_path: Optional[Path] = Field(default=None, description="Slurm job error output")
+    working_dir: Path | None = Field(default=None, description="Slurm job chdir")
+    log_path: Path | None = Field(default=None, description="Slurm job output")
+    err_path: Path | None = Field(default=None, description="Slurm job error output")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
@@ -97,12 +97,12 @@ class SlurmJobConfiguration(BaseJobConfiguration):
         description="Slurm job time limit (in minutes)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
-    partition: Optional[str] = Field(
+    partition: str | None = Field(
         default=None,
         title="Slurm partition",
         description="The SLURM partition (queue) jobs are submitted to.",
     )
-    memory: Optional[str] = Field(
+    memory: str | None = Field(
         default=None,
         pattern="^[0-9]{1,9}[M|G]$",
         title="Slurm memory limit",
@@ -121,13 +121,13 @@ class SlurmJobConfiguration(BaseJobConfiguration):
         description="Names of modules to load for slurm job.",
     )
 
-    conda_environment: Optional[str] = Field(
+    conda_environment: str | None = Field(
         default=None,
         title="Conda environment",
         description="DEPRECATED: use python_environment",
     )
 
-    python_environment: Optional[PythonEnvironment] = Field(
+    python_environment: PythonEnvironment | None = Field(
         default=None,
         title="Python environment",
         description="Python environment loaded inside slurm job.",
@@ -152,8 +152,8 @@ class SlurmJobConfiguration(BaseJobConfiguration):
     def prepare_for_flow_run(
         self,
         flow_run: FlowRun,
-        deployment: Optional[DeploymentResponse] = None,
-        flow: Optional[Flow] = None,
+        deployment: DeploymentResponse | None = None,
+        flow: Flow | None = None,
     ):
         """Prepare the flow run by setting some important environment variables and
         adjusting the execution environment.
@@ -166,9 +166,9 @@ class SlurmJobVariables(BaseVariables):
     submission time of a new job and will be used to template a SlurmJobConfiguration.
     """
 
-    working_dir: Optional[Path] = Field(default=None, description="Slurm job chdir")
-    log_path: Optional[Path] = Field(default=None, description="Slurm job output")
-    err_path: Optional[Path] = Field(default=None, description="Slurm job error output")
+    working_dir: Path | None = Field(default=None, description="Slurm job chdir")
+    log_path: Path | None = Field(default=None, description="Slurm job output")
+    err_path: Path | None = Field(default=None, description="Slurm job error output")
 
     num_nodes: int = Field(default=1)
     num_processes_per_node: int = Field(default=1)
@@ -177,12 +177,12 @@ class SlurmJobVariables(BaseVariables):
         description="Slurm job time limit (in minutes)",
         # default="24:00:00", pattern="^[0-9]{1,9}:[0-5][0-9]:[0-5][0-9]"
     )
-    partition: Optional[str] = Field(
+    partition: str | None = Field(
         default=None,
         title="Slurm partition",
         description="The SLURM partition (queue) jobs are submitted to.",
     )
-    memory: Optional[str] = Field(
+    memory: str | None = Field(
         default=None,
         pattern="^[0-9]{1,9}[M|G]$",
         title="Slurm memory limit",
@@ -201,13 +201,13 @@ class SlurmJobVariables(BaseVariables):
         description="Names of modules to load for slurm job.",
     )
 
-    conda_environment: Optional[str] = Field(
+    conda_environment: str | None = Field(
         default=None,
         title="Conda environment",
         description="DEPRECATED: use python_environment",
     )
 
-    python_environment: Optional[PythonEnvironment] = Field(
+    python_environment: PythonEnvironment | None = Field(
         default=None,
         title="Python environment",
         description="Python environment loaded inside slurm job.",
@@ -230,7 +230,7 @@ class SlurmWorker(BaseWorker):
         self,
         flow_run: FlowRun,
         configuration: SlurmJobConfiguration,
-        task_status: Optional[anyio.abc.TaskStatus] = None,
+        task_status: anyio.abc.TaskStatus | None = None,
     ) -> BaseWorkerResult:
         logger = self.get_flow_run_logger(flow_run)
         prefect_home = Path(PREFECT_HOME.value())
@@ -341,7 +341,7 @@ class SlurmWorker(BaseWorker):
         self,
         configuration: SlurmJobConfiguration,
         logger: PrefectLogAdapter,
-    ) -> Optional[str]:
+    ) -> str | None:
         script = self._submit_script(configuration, logger)
         command = [
             "sbatch",
@@ -365,9 +365,7 @@ class SlurmWorker(BaseWorker):
             script=script,
             logger=logger,
             catch_output=True,
-            env=os.environ
-            | configuration.env
-            | {"TMPDIR": f"/tmp/prefect-{os.environ.get('LOGNAME', uuid.uuid4())}"},
+            env=os.environ | configuration.env | {"TMPDIR": f"/tmp/prefect-{os.environ.get('LOGNAME', uuid.uuid4())}"},
         )
         try:
             job_id = output.strip()
@@ -380,7 +378,7 @@ class SlurmWorker(BaseWorker):
 
     async def _watch_job(
         self,
-        job_id: Optional[str],
+        job_id: str | None,
         logger: PrefectLogAdapter,
     ) -> AsyncGenerator[SlurmJob, None]:
         if job_id is None:
@@ -412,7 +410,7 @@ class SlurmWorker(BaseWorker):
 
     async def _watch_job_safe(
         self,
-        job_id: Optional[str],
+        job_id: str | None,
         configuration: SlurmJobConfiguration,
         logger: PrefectLogAdapter,
     ) -> SlurmJob:
@@ -431,10 +429,10 @@ class SlurmWorker(BaseWorker):
 
 async def run_process_pipe_script(
     command: list[str],
-    script: Optional[str] = None,
-    logger: Optional[PrefectLogAdapter] = None,
+    script: str | None = None,
+    logger: PrefectLogAdapter | None = None,
     catch_output: bool = False,
-    env: Union[Mapping[str, str | None], None] = None,
+    env: Mapping[str, str | None] | None = None,
 ) -> str:
     """Like `anyio.run_process` but with:
 
