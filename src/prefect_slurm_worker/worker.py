@@ -274,7 +274,7 @@ class SlurmWorker(BaseWorker):
         if tmp_error is not None:
             tmp_error.unlink(missing_ok=True)
         return SlurmWorkerResult(
-            status_code=job.exit_code or -1,
+            status_code=job.exit_code if job.exit_code is not None else -1,
             identifier=job.id or "",
         )
 
